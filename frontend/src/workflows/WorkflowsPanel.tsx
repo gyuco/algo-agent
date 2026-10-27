@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { WorkflowResource } from '../agents/api'
-import type { RateLimitSnapshot } from '../claude/api'
 import { LOCALES, type MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 import { workflowsApi, type RunStatus, type WorkflowRun } from './api'
@@ -23,7 +22,8 @@ interface Props {
   projectId: number
   /** Workflows switched on in the project. */
   workflows: WorkflowResource[]
-  onUsage: (rateLimits: RateLimitSnapshot) => void
+  /** Provider details a turn reported, e.g. Claude's plan usage. */
+  onUsage: (provider: string, details: Record<string, unknown>) => void
 }
 
 /** Starts a workflow, follows its steps live and lists the project's past runs. */
@@ -72,7 +72,7 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
             updateLast((s) => ({ ...s, tools: [...s.tools, event.name] }))
             break
           case 'usage':
-            onUsage(event.rateLimits)
+            onUsage(event.provider, event.details)
             break
           case 'error':
             updateLast((s) => ({ ...s, error: event.message }))

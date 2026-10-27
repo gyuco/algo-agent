@@ -1,5 +1,4 @@
 import { api, apiStream } from '../api/client'
-import type { RateLimitSnapshot } from '../claude/api'
 import type { Attachment } from './attachments'
 
 export interface Workspace {
@@ -9,10 +8,12 @@ export interface Workspace {
 }
 
 export type ChatEvent =
-  | { type: 'session'; sessionId: string; model: string }
+  /** `sessionId` is opaque: send it back to continue the conversation. */
+  | { type: 'session'; provider: string; sessionId: string; model: string }
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string; target: string | null }
-  | { type: 'usage'; rateLimits: RateLimitSnapshot }
+  /** New provider-specific connection details, e.g. Claude's plan usage. */
+  | { type: 'usage'; provider: string; details: Record<string, unknown> }
   | { type: 'done'; isError: boolean; costUsd: number; durationMs: number; turns: number }
   | { type: 'error'; message: string }
 

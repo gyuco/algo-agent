@@ -192,11 +192,6 @@ code {
   font-family: ui-monospace, Consolas, monospace;
 }
 
-.home .card.usage {
-  max-width: none;
-  margin-bottom: 1.5rem;
-}
-
 .usage-head,
 .usage-foot {
   display: flex;
@@ -605,16 +600,17 @@ button.folder:hover:not(:disabled) {
   background: var(--card);
 }
 
-.claude-status {
+.connections-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-right: auto;
   font-size: 0.875rem;
   color: var(--text-h);
+  text-decoration: none;
 }
 
-.claude-status .dot {
+.connections-status .dot {
   display: inline-block;
 }
 
@@ -635,48 +631,33 @@ button.icon:hover:not(:disabled) {
   color: var(--accent);
 }
 
-dialog.usage-modal {
-  position: fixed;
-  width: min(760px, calc(100vw - 2rem));
-  padding: 0;
-  border: none;
-  border-radius: 12px;
-  background: var(--card);
-  color: var(--text);
+.connections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1rem;
+  align-items: start;
+  margin-top: 1.5rem;
 }
 
-dialog.usage-modal::backdrop {
-  background: rgb(0 0 0 / 0.4);
-}
-
-dialog.usage-modal .card.usage {
+.home .card.connection {
   max-width: none;
-  margin: 0;
-  border: none;
+  padding: 1.5rem;
 }
 
-dialog.usage-modal .close {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  border: none;
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-dialog.usage-modal .usage-head {
-  padding-right: 2rem;
-}
-
-dialog.usage-modal > .error,
-dialog.usage-modal > .connection {
-  padding: 0 2rem 1.5rem;
-  font-size: 0.875rem;
-}
-
-dialog.usage-modal > .connection {
-  padding-top: 1.25rem;
+.card.connection .usage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding-top: 0.875rem;
   border-top: 1px solid var(--border);
+}
+
+.model-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  font-size: 0.875rem;
 }
 
 .project-cards {

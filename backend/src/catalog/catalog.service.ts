@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { resolve } from 'node:path';
-import { ClaudeService } from '../claude/claude.service.js';
+import { ConnectionsService } from '../connections/connections.service.js';
 import { CryptoService } from '../crypto/crypto.service.js';
 import type { Resource } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -38,7 +38,7 @@ export class CatalogService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly config: ConfigService,
-    private readonly claude: ClaudeService,
+    private readonly connections: ConnectionsService,
   ) {}
 
   /** Example resources shipped with the app (backend/catalog). */
@@ -93,7 +93,7 @@ export class CatalogService {
       mcp: [...catalog.mcp.values()],
       skills: [...catalog.skills.values()],
       workflows: [...catalog.workflows.values()],
-      stdioAllowed: await this.claude.isPersonalOwner(userId),
+      stdioAllowed: await this.connections.isPersonalOwner(userId),
     };
   }
 
@@ -139,7 +139,7 @@ export class CatalogService {
   async importExamples(userId: number) {
     const rows = await this.rows(userId);
     const have = new Set(rows.map((r) => `${r.kind}:${r.key}`));
-    const allowStdio = await this.claude.isPersonalOwner(userId);
+    const allowStdio = await this.connections.isPersonalOwner(userId);
     const added = (await readCatalogDir(this.examplesDir())).filter(
       (e) =>
         !have.has(`${e.kind}:${e.key}`) &&
@@ -182,7 +182,7 @@ export class CatalogService {
     if (
       entry.kind === 'mcp' &&
       catalog.mcp.get(entry.key)?.type === 'stdio' &&
-      !(await this.claude.isPersonalOwner(userId))
+      !(await this.connections.isPersonalOwner(userId))
     ) {
       throw new ForbiddenException(
         "I server MCP stdio eseguono comandi su questa macchina: solo il proprietario dell'app in modalità personale può crearli",

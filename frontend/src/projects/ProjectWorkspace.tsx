@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { resourcesApi, type ProjectResources } from '../agents/api'
 import { ResourcesPanel } from '../agents/ResourcesPanel'
 import { ChatPanel } from '../chat/ChatPanel'
-import type { ClaudeStatusState } from '../claude/useClaudeStatus'
+import type { ConnectionsState } from '../connections/useConnections'
 import { useI18n } from '../i18n/useI18n'
 import type { MessageKey } from '../i18n/messages'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
@@ -10,7 +10,7 @@ import { projectsApi, type Project } from './api'
 
 interface Props {
   projectId: number
-  claude: ClaudeStatusState
+  connections: ConnectionsState
 }
 
 type Tab = 'chat' | 'workflows' | 'resources'
@@ -22,14 +22,13 @@ const TABS: [Tab, MessageKey][] = [
 ]
 
 /** One project's workspace: chat, workflows and the agents it has on. Key it by project. */
-export function ProjectWorkspace({ projectId, claude }: Props) {
+export function ProjectWorkspace({ projectId, connections }: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
   /** '' means a failure without a server message. */
   const [error, setError] = useState<string | null>(null)
-  const { status } = claude
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '')
 
@@ -43,7 +42,7 @@ export function ProjectWorkspace({ projectId, claude }: Props) {
 
   useEffect(loadResources, [loadResources])
 
-  const connected = status?.connected && status.session
+  const connected = connections.connected.length > 0
   const agents = resources?.agents.filter((a) => a.enabled) ?? []
   /** Remounts the chat when the set of agents changes, so it never keeps a disabled one. */
   const agentsKey = agents.map((a) => a.key).join(',')
@@ -83,9 +82,9 @@ export function ProjectWorkspace({ projectId, claude }: Props) {
               </button>
             ))}
           </div>
-          {!connected && tab !== 'resources' && !claude.checking && (
+          {!connected && tab !== 'resources' && !connections.checking && (
             <p className="hint">
-              {t('workspace.connectFirst')} <a href="#/">{t('nav.home')}</a>
+              {t('workspace.connectFirst')} <a href="#/connections">{t('nav.connections')}</a>
             </p>
           )}
           {/* Panels stay mounted while hidden, so switching tab doesn't stop a running turn. */}
@@ -96,8 +95,8 @@ export function ProjectWorkspace({ projectId, claude }: Props) {
                 projectId={project.id}
                 path={project.path}
                 agents={agents}
-                session={status.session!}
-                onUsage={claude.updateRateLimits}
+                connections={connections.connected}
+                onUsage={connections.updateDetails}
               />
             </div>
           )}
@@ -106,7 +105,7 @@ export function ProjectWorkspace({ projectId, claude }: Props) {
               <WorkflowsPanel
                 projectId={project.id}
                 workflows={resources.workflows.filter((w) => w.enabled)}
-                onUsage={claude.updateRateLimits}
+                onUsage={connections.updateDetails}
               />
             </div>
           )}

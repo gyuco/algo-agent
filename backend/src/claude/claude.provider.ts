@@ -10,10 +10,23 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CryptoService } from '../crypto/crypto.service.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { ConnectionsService } from '../connections/connections.service.js';
+import type {
+  AgentProvider,
+  ChatEvent,
+  ProviderStatus,
+  RunContext,
+} from '../providers/provider.js';
+import {
+  CLAUDE,
+  capabilities,
+  confine,
+  sdkPrompt,
+  skillsPlugin,
+  toEvents,
+} from './claude-runtime.js';
 import { type RateLimitSnapshot, toRateLimitSnapshot } from './rate-limit.js';
 import { SetupTokenSession } from './setup-token.session.js';
 
@@ -32,26 +45,9 @@ const ENV_VAR: Record<ClaudeMethod, string> = {
   oauth_token: 'CLAUDE_CODE_OAUTH_TOKEN',
 };
 
-export interface ClaudeStatus {
-  connected: boolean;
-  method: ClaudeMethod | null;
-  secretHint: string | null;
-  /** Subscription login is offered only in personal mode, to the app owner. */
-  subscriptionAvailable: boolean;
-  /** Whether the Claude Code runtime started and picked up the user's credential. */
-  runtime: { ok: boolean; error?: string } | null;
-  session: ClaudeSessionInfo | null;
-  error?: string;
-}
-
-export interface ClaudeSessionInfo {
-  claudeCodeVersion: string | null;
-  models: { value: string; displayName: string }[];
-  connectedAt: string;
-  /** Estimated from the connection date; null for API keys, which don't expire. */
-  tokenExpiresAt: string | null;
-  /** Last plan usage reported by Claude Code; null until a prompt has run. */
-  rateLimits: RateLimitSnapshot | null;
+interface Credential {
+  method: ClaudeMethod;
+  secret: string;
 }
 
 interface RuntimeCheck {
@@ -72,14 +68,18 @@ interface PendingSetup {
   timer: NodeJS.Timeout;
 }
 
+/** Claude Code through the Agent SDK, with an API key or (personal mode) a Pro/Max subscription. */
 @Injectable()
-export class ClaudeService implements OnModuleDestroy {
-  private readonly logger = new Logger(ClaudeService.name);
+export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
+  readonly id = CLAUDE;
+  readonly label = 'Claude Code';
+  readonly supports = { tools: true, mcp: true, skills: true };
+
+  private readonly logger = new Logger(ClaudeProvider.name);
   private readonly pendingSetups = new Map<string, PendingSetup>();
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly crypto: CryptoService,
+    private readonly connections: ConnectionsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -87,69 +87,55 @@ export class ClaudeService implements OnModuleDestroy {
     for (const id of this.pendingSetups.keys()) this.dropSetup(id);
   }
 
-  async status(userId: number): Promise<ClaudeStatus> {
-    const subscriptionAvailable = await this.isPersonalOwner(userId);
-    const credential = await this.prisma.claudeCredential.findUnique({
-      where: { userId },
-    });
-    if (!credential) {
-      return {
-        connected: false,
-        method: null,
-        secretHint: null,
-        subscriptionAvailable,
-        runtime: null,
-        session: null,
-      };
-    }
-
-    const method = credential.method as ClaudeMethod;
+  async status(userId: number): Promise<ProviderStatus> {
+    const subscriptionAvailable =
+      await this.connections.isPersonalOwner(userId);
+    const methods: ClaudeMethod[] = subscriptionAvailable
+      ? ['oauth_token', 'api_key']
+      : ['api_key'];
+    const connection = await this.connections.find(userId, CLAUDE);
     const base = {
-      method,
-      secretHint: credential.secretHint,
-      subscriptionAvailable,
-      session: null,
+      methods,
+      connected: false,
+      method: connection?.method ?? null,
+      secretHint: connection?.secretHint ?? null,
+      connectedAt: connection?.createdAt.toISOString() ?? null,
+      version: null,
+      models: [],
     };
+    if (!connection?.secret) return base;
+
+    const method = connection.method as ClaudeMethod;
     if (method === 'oauth_token' && !subscriptionAvailable) {
       return {
         ...base,
-        connected: false,
-        runtime: null,
         error: 'Abbonamento disponibile solo in modalità personale',
       };
     }
-
-    const secret = this.crypto.decrypt(credential.secretEncrypted);
     if (method === 'api_key') {
-      const keyError = await this.validateApiKey(secret);
-      if (keyError) {
-        return { ...base, connected: false, runtime: null, error: keyError };
-      }
+      const keyError = await this.validateApiKey(connection.secret);
+      if (keyError) return { ...base, error: keyError };
     }
-    const { claudeCodeVersion, models, ...runtime } = await this.checkRuntime(
-      userId,
+    const runtime = await this.checkRuntime(userId, {
       method,
-      secret,
-    );
-    if (!runtime.ok) return { ...base, connected: false, runtime };
+      secret: connection.secret,
+    });
+    if (!runtime.ok) return { ...base, error: runtime.error };
 
     return {
       ...base,
       connected: true,
-      runtime,
-      session: {
-        claudeCodeVersion: claudeCodeVersion ?? null,
-        models: models ?? [],
-        connectedAt: credential.createdAt.toISOString(),
+      version: runtime.claudeCodeVersion ?? null,
+      // "default" stands for "no choice", which the chat already offers.
+      models: (runtime.models ?? []).filter((m) => m.value !== 'default'),
+      details: {
         tokenExpiresAt:
           method === 'oauth_token'
             ? new Date(
-                credential.createdAt.getTime() + OAUTH_TOKEN_LIFETIME_MS,
+                connection.createdAt.getTime() + OAUTH_TOKEN_LIFETIME_MS,
               ).toISOString()
             : null,
-        rateLimits: credential.rateLimitJson
-          ? (JSON.parse(credential.rateLimitJson) as RateLimitSnapshot)
-          : null,
+        rateLimits: connection.state.rateLimits ?? null,
       },
     };
   }
@@ -158,29 +144,24 @@ export class ClaudeService implements OnModuleDestroy {
    * Plan limits only reach the app inside prompt responses, so send a tiny
    * one. Uses a little of the subscription's quota.
    */
-  async refreshUsage(userId: number): Promise<ClaudeStatus> {
+  async refreshUsage(userId: number): Promise<ProviderStatus> {
     await this.assertSubscriptionAllowed(userId);
-    const credential = await this.prisma.claudeCredential.findUnique({
-      where: { userId },
-    });
-    if (credential?.method !== 'oauth_token') {
+    const connection = await this.connections.find(userId, CLAUDE);
+    if (connection?.method !== 'oauth_token' || !connection.secret) {
       throw new BadRequestException(
         'I limiti del piano esistono solo con un abbonamento collegato',
       );
     }
-    const probe = await this.probeOAuthToken(
-      userId,
-      this.crypto.decrypt(credential.secretEncrypted),
-    );
+    const probe = await this.probeOAuthToken(userId, connection.secret);
     if (probe.error) throw new BadRequestException(probe.error);
     await this.saveRateLimits(userId, probe.rateLimits);
     return this.status(userId);
   }
 
-  async connectApiKey(userId: number, apiKey: string): Promise<ClaudeStatus> {
+  async connectApiKey(userId: number, apiKey: string): Promise<ProviderStatus> {
     const keyError = await this.validateApiKey(apiKey);
     if (keyError) throw new BadRequestException(keyError);
-    await this.saveCredential(userId, 'api_key', apiKey);
+    await this.connections.save(userId, CLAUDE, 'api_key', apiKey);
     return this.status(userId);
   }
 
@@ -219,7 +200,7 @@ export class ClaudeService implements OnModuleDestroy {
     userId: number,
     sessionId: string,
     code: string,
-  ): Promise<ClaudeStatus> {
+  ): Promise<ProviderStatus> {
     const pending = this.pendingSetups.get(sessionId);
     if (!pending || pending.userId !== userId) {
       throw new NotFoundException('Sessione scaduta: riavvia il collegamento');
@@ -242,32 +223,82 @@ export class ClaudeService implements OnModuleDestroy {
   async connectOAuthToken(
     userId: number,
     token: string,
-  ): Promise<ClaudeStatus> {
+  ): Promise<ProviderStatus> {
     await this.assertSubscriptionAllowed(userId);
     const probe = await this.probeOAuthToken(userId, token);
     if (probe.error) throw new BadRequestException(probe.error);
-    await this.saveCredential(userId, 'oauth_token', token);
+    await this.connections.save(userId, CLAUDE, 'oauth_token', token);
     await this.saveRateLimits(userId, probe.rateLimits);
     return this.status(userId);
   }
 
-  /** The user's stored credential, for running Agent SDK sessions on their behalf. */
-  async credentialFor(
-    userId: number,
-  ): Promise<{ method: ClaudeMethod; secret: string }> {
-    const credential = await this.prisma.claudeCredential.findUnique({
-      where: { userId },
-    });
-    if (!credential) {
-      throw new BadRequestException('Claude Code non è connesso');
-    }
-    const method = credential.method as ClaudeMethod;
-    if (method === 'oauth_token') await this.assertSubscriptionAllowed(userId);
-    return { method, secret: this.crypto.decrypt(credential.secretEncrypted) };
+  async disconnect(userId: number): Promise<void> {
+    await this.connections.remove(userId, CLAUDE);
   }
 
-  async disconnect(userId: number): Promise<void> {
-    await this.prisma.claudeCredential.deleteMany({ where: { userId } });
+  /** Yields chat events as Claude Code streams them. */
+  async *run(ctx: RunContext): AsyncGenerator<ChatEvent> {
+    const credential = await this.credentialFor(ctx.userId);
+    const env = await this.agentEnv(ctx.userId, credential);
+    const pluginDir = ctx.policy.skills.length
+      ? await skillsPlugin(
+          join(env.CLAUDE_CONFIG_DIR, 'runs'),
+          ctx.policy.skills.map((k) => ctx.catalog.skills.get(k)!),
+        )
+      : null;
+    const abortController = new AbortController();
+    ctx.signal.addEventListener('abort', () => abortController.abort(), {
+      once: true,
+    });
+
+    const session = query({
+      prompt: sdkPrompt(ctx.prompt),
+      options: {
+        abortController,
+        cwd: ctx.cwd,
+        env,
+        model: ctx.model,
+        resume: ctx.sessionId,
+        ...capabilities(ctx.catalog, ctx.policy, ctx.cwd, pluginDir),
+        ...confine(ctx.cwd, ctx.policy, this.logger),
+        permissionMode: 'default',
+        // Don't load the workspace's own settings: they could add hooks or permissions.
+        settingSources: [],
+        systemPrompt: ctx.systemPrompt,
+        includePartialMessages: true,
+        maxTurns: ctx.agent.maxTurns ?? 20,
+      },
+    });
+
+    let wroteText = false;
+    try {
+      for await (const message of session) {
+        for (const event of toEvents(message, () => wroteText)) {
+          if (event.type === 'text') wroteText = true;
+          if (event.type === 'usage') {
+            await this.connections.updateState(
+              ctx.userId,
+              CLAUDE,
+              event.details,
+            );
+          }
+          yield event;
+        }
+      }
+    } finally {
+      if (pluginDir) await rm(pluginDir, { recursive: true, force: true });
+    }
+  }
+
+  /** The user's stored credential, for running Agent SDK sessions on their behalf. */
+  private async credentialFor(userId: number): Promise<Credential> {
+    const connection = await this.connections.find(userId, CLAUDE);
+    if (!connection?.secret) {
+      throw new BadRequestException('Claude Code non è connesso');
+    }
+    const method = connection.method as ClaudeMethod;
+    if (method === 'oauth_token') await this.assertSubscriptionAllowed(userId);
+    return { method, secret: connection.secret };
   }
 
   /**
@@ -275,9 +306,9 @@ export class ClaudeService implements OnModuleDestroy {
    * is per user so the runtime never falls back to a Claude login present on
    * the host: the only credential it sees is the one passed here.
    */
-  async agentEnv(
+  private async agentEnv(
     userId: number,
-    credential?: { method: ClaudeMethod; secret: string },
+    credential?: Credential,
   ): Promise<Record<string, string>> {
     const configDir = join(process.cwd(), '.claude-runtime', String(userId));
     await mkdir(configDir, { recursive: true, mode: 0o700 });
@@ -289,53 +320,21 @@ export class ClaudeService implements OnModuleDestroy {
     };
   }
 
-  /** Personal mode and the app owner (first user): may use a subscription and run local MCP commands. */
-  async isPersonalOwner(userId: number): Promise<boolean> {
-    if (this.config.get('PERSONAL_MODE') !== 'true') return false;
-    const owner = await this.prisma.user.findFirst({
-      orderBy: { id: 'asc' },
-      select: { id: true },
-    });
-    return owner?.id === userId;
-  }
-
   private async assertSubscriptionAllowed(userId: number) {
-    if (!(await this.isPersonalOwner(userId))) {
+    if (!(await this.connections.isPersonalOwner(userId))) {
       throw new ForbiddenException(
         "Abbonamento disponibile solo in modalità personale, per il proprietario dell'app",
       );
     }
   }
 
-  private async saveCredential(
+  private async saveRateLimits(
     userId: number,
-    method: ClaudeMethod,
-    secret: string,
+    rateLimits: RateLimitSnapshot | null,
   ) {
-    const data = {
-      method,
-      secretEncrypted: this.crypto.encrypt(secret),
-      secretHint: `…${secret.slice(-4)}`,
-      rateLimitJson: null,
-      rateLimitAt: null,
-    };
-    await this.prisma.claudeCredential.upsert({
-      where: { userId },
-      // A new credential starts a new connection: reset its date too.
-      update: { ...data, createdAt: new Date() },
-      create: { userId, ...data },
-    });
-  }
-
-  async saveRateLimits(userId: number, rateLimits: RateLimitSnapshot | null) {
-    if (!rateLimits) return;
-    await this.prisma.claudeCredential.update({
-      where: { userId },
-      data: {
-        rateLimitJson: JSON.stringify(rateLimits),
-        rateLimitAt: new Date(rateLimits.observedAt),
-      },
-    });
+    if (rateLimits) {
+      await this.connections.updateState(userId, CLAUDE, { rateLimits });
+    }
   }
 
   /** Keeps what the CLI printed (secrets redacted) so a failed sign-in can be diagnosed. */
@@ -443,8 +442,7 @@ export class ClaudeService implements OnModuleDestroy {
   /** Starts Claude Code without sending a prompt, so no tokens are used. */
   private async checkRuntime(
     userId: number,
-    method: ClaudeMethod,
-    secret: string,
+    credential: Credential,
   ): Promise<RuntimeCheck> {
     // Never yields: keeps the session open for control requests without sending a prompt.
     const idle = async function* (): AsyncGenerator<never> {
@@ -454,7 +452,7 @@ export class ClaudeService implements OnModuleDestroy {
     const session = query({
       prompt: idle(),
       options: {
-        env: await this.agentEnv(userId, { method, secret }),
+        env: await this.agentEnv(userId, credential),
         settingSources: [],
         persistSession: false,
       },
@@ -472,8 +470,10 @@ export class ClaudeService implements OnModuleDestroy {
       ]);
       const { account } = init;
       const source =
-        method === 'api_key' ? account.apiKeySource : account.tokenSource;
-      if (source !== ENV_VAR[method]) {
+        credential.method === 'api_key'
+          ? account.apiKeySource
+          : account.tokenSource;
+      if (source !== ENV_VAR[credential.method]) {
         return {
           ok: false,
           error: 'Claude Code non usa la credenziale fornita',

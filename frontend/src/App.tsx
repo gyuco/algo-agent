@@ -7,9 +7,9 @@ import { LibraryPage } from './library/LibraryPage'
 import { ProjectCards } from './projects/ProjectCards'
 import { ProjectsPage } from './projects/ProjectsPage'
 import { ProjectWorkspace } from './projects/ProjectWorkspace'
-import { ClaudeConnection } from './claude/ClaudeConnection'
-import { ClaudeStatusBadge } from './claude/ClaudeStatusBadge'
-import { useClaudeStatus, type ClaudeStatusState } from './claude/useClaudeStatus'
+import { ConnectionsBadge } from './connections/ConnectionsBadge'
+import { ConnectionsPage } from './connections/ConnectionsPage'
+import { useConnections, type ConnectionsState } from './connections/useConnections'
 
 function greeting(t: (key: MessageKey) => string, date = new Date()) {
   const hour = date.getHours()
@@ -22,12 +22,14 @@ type Page =
   | { name: 'home' }
   | { name: 'projects' }
   | { name: 'resources' }
+  | { name: 'connections' }
   | { name: 'workspace'; projectId: number }
 
 function pageFromHash(): Page {
   const hash = window.location.hash
   if (hash === '#/projects') return { name: 'projects' }
   if (hash === '#/resources') return { name: 'resources' }
+  if (hash === '#/connections') return { name: 'connections' }
   const workspace = /^#\/workspace\/(\d+)$/.exec(hash)
   if (workspace) return { name: 'workspace', projectId: Number(workspace[1]) }
   return { name: 'home' }
@@ -68,6 +70,11 @@ function Sidebar({ page }: { page: Page }) {
               {t('nav.resources')}
             </a>
           </li>
+          <li>
+            <a href="#/connections" aria-current={page.name === 'connections' ? 'page' : undefined}>
+              {t('nav.connections')}
+            </a>
+          </li>
         </ul>
       </nav>
       <label className="language">
@@ -87,7 +94,7 @@ function Sidebar({ page }: { page: Page }) {
 function App() {
   const { user, loading, logout } = useAuth()
   const page = usePage()
-  const claude = useClaudeStatus()
+  const connections = useConnections()
   const { t } = useI18n()
 
   if (loading) return <main className="auth">{t('app.loading')}</main>
@@ -98,7 +105,7 @@ function App() {
       <Sidebar page={page} />
       <main className="home">
         <header>
-          <ClaudeStatusBadge claude={claude} />
+          <ConnectionsBadge state={connections} />
           <span className="user">{user.email}</span>
           <button type="button" onClick={logout}>
             {t('app.logout')}
@@ -106,17 +113,17 @@ function App() {
         </header>
         {page.name === 'projects' && <ProjectsPage />}
         {page.name === 'resources' && <LibraryPage />}
+        {page.name === 'connections' && <ConnectionsPage state={connections} />}
         {page.name === 'workspace' && (
-          <ProjectWorkspace key={page.projectId} projectId={page.projectId} claude={claude} />
+          <ProjectWorkspace key={page.projectId} projectId={page.projectId} connections={connections} />
         )}
-        {page.name === 'home' && <Dashboard name={user.email.split('@')[0]} claude={claude} />}
+        {page.name === 'home' && <Dashboard name={user.email.split('@')[0]} connections={connections} />}
       </main>
     </div>
   )
 }
 
-function Dashboard({ name, claude }: { name: string; claude: ClaudeStatusState }) {
-  const { status } = claude
+function Dashboard({ name, connections }: { name: string; connections: ConnectionsState }) {
   const { t } = useI18n()
 
   return (
@@ -124,8 +131,12 @@ function Dashboard({ name, claude }: { name: string; claude: ClaudeStatusState }
       <h1>
         {greeting(t)}, {name}!
       </h1>
-      {/* Once connected, status and usage live in the header. */}
-      {!status?.connected && <ClaudeConnection {...claude} />}
+      {/* Until a provider is connected, point to where that happens. */}
+      {!connections.checking && connections.connected.length === 0 && (
+        <p className="hint">
+          {t('connections.homePrompt')} <a href="#/connections">{t('nav.connections')}</a>
+        </p>
+      )}
       <ProjectCards />
     </>
   )

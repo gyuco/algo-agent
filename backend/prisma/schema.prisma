@@ -15,24 +15,29 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  claudeCredential ClaudeCredential?
-  projects         Project[]
-  resources        Resource[]
+  connections ProviderConnection[]
+  projects    Project[]
+  resources   Resource[]
 }
 
-model ClaudeCredential {
-  id              Int       @id @default(autoincrement())
-  userId          Int       @unique
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// "api_key" (ANTHROPIC_API_KEY) or "oauth_token" (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`)
+/// A user's connection to an agent provider (Claude Code, OpenCode, ...).
+model ProviderConnection {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Provider id: "claude" or "opencode"
+  provider        String
+  /// How it connects. claude: "api_key" (ANTHROPIC_API_KEY) or "oauth_token" (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`); opencode: "local"
   method          String
-  secretEncrypted String
-  secretHint      String
-  /// Last plan rate-limit snapshot (JSON) seen in a Claude Code rate_limit_event; subscriptions only.
-  rateLimitJson   String?
-  rateLimitAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  /// Null for methods that use credentials already on the machine.
+  secretEncrypted String?
+  secretHint      String?
+  /// Provider-specific state (JSON), e.g. Claude's last plan rate-limit snapshot.
+  stateJson       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, provider])
 }
 
 model Project {

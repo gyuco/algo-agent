@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { FILE_ACCESS_KEY } from '../agents/labels'
 import type { AgentResource } from '../agents/api'
-import type { ClaudeSessionInfo, RateLimitSnapshot } from '../claude/api'
+import type { ConnectionStatus } from '../connections/api'
 import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 import { chatApi, type Workspace } from './api'
@@ -60,12 +60,14 @@ interface Props {
   path: string
   /** Agents switched on in the project. */
   agents: AgentResource[]
-  session: ClaudeSessionInfo
-  onUsage: (rateLimits: RateLimitSnapshot) => void
+  /** Connected providers, whose models the chat offers. */
+  connections: ConnectionStatus[]
+  /** Provider details a turn reported, e.g. Claude's plan usage. */
+  onUsage: (provider: string, details: Record<string, unknown>) => void
 }
 
-/** Chat with Claude Code inside one folder; remount it (key) to switch folders. */
-export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) {
+/** Chat with an agent inside one folder; remount it (key) to switch folders. */
+export function ChatPanel({ projectId, path, agents, connections, onUsage }: Props) {
   const { t } = useI18n()
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
@@ -81,6 +83,8 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
   const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const [sessionId, setSessionId] = useState<string | undefined>()
+  /** Provider the conversation runs on: it can't move to another one. */
+  const [sessionProvider, setSessionProvider] = useState<string | undefined>()
   const [streaming, setStreaming] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const nextId = useRef(0)
@@ -190,6 +194,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
         switch (event.type) {
           case 'session':
             setSessionId(event.sessionId)
+            setSessionProvider(event.provider)
             break
           case 'text':
             update(replyId, (m) => ({ ...m, text: m.text + event.text }))
@@ -201,7 +206,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
             }))
             break
           case 'usage':
-            onUsage(event.rateLimits)
+            onUsage(event.provider, event.details)
             break
           case 'error':
             update(replyId, (m) => ({ ...m, error: event.message }))
@@ -249,7 +254,15 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
 
   function newConversation() {
     setSessionId(undefined)
+    setSessionProvider(undefined)
     setMessages([])
+  }
+
+  /** A conversation belongs to one provider: a model of another one starts a new conversation. */
+  function chooseModel(value: string) {
+    const provider = connections.find((c) => c.models.some((m) => m.value === value))?.provider
+    if (sessionProvider && provider && provider !== sessionProvider) newConversation()
+    setModel(value)
   }
 
   /** A conversation belongs to one agent: switching starts a new one. */
@@ -431,18 +444,20 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
                 aria-label={t('chat.modelLabel')}
                 value={model}
                 disabled={streaming}
-                onChange={(e) => setModel(e.target.value)}
+                onChange={(e) => chooseModel(e.target.value)}
               >
                 <option value="">
                   {agent?.model ? t('chat.agentModel', { model: agent.model }) : t('chat.defaultModel')}
                 </option>
-                {session.models
-                  .filter((m) => m.value !== 'default')
-                  .map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.displayName}
-                    </option>
-                  ))}
+                {connections.map((c) => (
+                  <optgroup key={c.provider} label={c.label}>
+                    {c.models.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.displayName}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
               <small>{t('chat.hint')}</small>
             </div>

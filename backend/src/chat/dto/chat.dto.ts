@@ -7,7 +7,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -81,13 +80,14 @@ export class ChatMessageDto {
   @Type(() => AttachmentDto)
   attachments?: AttachmentDto[];
 
-  /** Claude Code session to continue; omitted for a new conversation. */
+  /** Session to continue, as the `session` event returned it; omitted for a new conversation. */
   @IsOptional()
-  @IsUUID()
+  @Matches(/^[a-z0-9-]{1,32}:[A-Za-z0-9_-]{1,128}$/)
   sessionId?: string;
 
+  /** `<provider>:<model>`, as listed by /connections; the agent's model when omitted. */
   @IsOptional()
   @IsString()
-  @Matches(/^[a-z0-9.\-[\]]{1,64}$/i)
+  @Matches(/^[a-z0-9._:/@\-[\]]{1,160}$/i)
   model?: string;
 }
