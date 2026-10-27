@@ -26,12 +26,16 @@ import {
   mcpServer,
   runConfig,
   type AgentConfig,
+  type SubagentConfig,
 } from './opencode-config.js';
 import { TurnEvents } from './opencode-events.js';
 import {
+  SUBAGENT_ACTION,
+  delegationViolation,
   mcpServerName,
   permissionRules,
   permissionViolation,
+  subagentId,
   type PermissionRequest,
 } from './opencode-policy.js';
 import { OpencodeError, OpencodeServer } from './opencode-server.js';
@@ -45,9 +49,14 @@ const MCP_SETTLE_MS = 500;
 
 type McpServers = Record<string, Record<string, unknown>>;
 
+/** The project's agents are OpenCode subagents under prefixed ids (see subagentId). */
+const DELEGATION_NOTE =
+  'In the subagent tool, name an agent by the id its description lists (agent_<name>).';
+
 /** What a run's config folder holds besides the user's providers. */
 interface RunFiles {
   agent: AgentConfig;
+  subagents: Record<string, SubagentConfig>;
   mcp: McpServers;
   skills: SkillSpec[];
 }
@@ -105,8 +114,7 @@ const PASSED_ENV = [
 export class OpencodeProvider implements AgentProvider {
   readonly id = OPENCODE;
   readonly label = 'OpenCode';
-  // Its subagents run in child sessions this provider doesn't follow yet.
-  readonly supports = { tools: true, mcp: true, skills: true, agents: false };
+  readonly supports = { tools: true, mcp: true, skills: true, agents: true };
 
   private readonly logger = new Logger(OpencodeProvider.name);
 
@@ -183,10 +191,27 @@ export class OpencodeProvider implements AgentProvider {
       const mcp = this.mcpServers(ctx, appTools);
       runDir = await this.runDir(ctx.userId, {
         agent: {
-          system: ctx.systemPrompt,
+          system: ctx.subagents.length
+            ? `${ctx.systemPrompt}\n${DELEGATION_NOTE}`
+            : ctx.systemPrompt,
           steps: ctx.agent.maxTurns ?? 20,
-          permissions: permissionRules(ctx.policy),
+          permissions: permissionRules(
+            ctx.policy,
+            ctx.subagents.map((s) => s.agent.key),
+          ),
         },
+        subagents: Object.fromEntries(
+          ctx.subagents.map((s) => [
+            subagentId(s.agent.key),
+            {
+              description: s.agent.description,
+              system: s.systemPrompt,
+              steps: s.agent.maxTurns ?? 20,
+              permissions: permissionRules(s.policy),
+              ...(s.model && { model: s.model }),
+            },
+          ]),
+        ),
         mcp,
         skills: ctx.policy.skills.map((k) => ctx.catalog.skills.get(k)!),
       });
@@ -215,11 +240,14 @@ export class OpencodeProvider implements AgentProvider {
       for await (const event of events) {
         if (!turn.concerns(event)) continue;
         if (event.type === 'permission.asked') {
+          const request = event.data as PermissionRequest & {
+            sessionID: string;
+          };
           await this.answer(
             server,
             ctx,
-            session.id,
-            event.data as PermissionRequest,
+            request,
+            turn.agentOf(request.sessionID),
           );
           continue;
         }
@@ -344,14 +372,30 @@ export class OpencodeProvider implements AgentProvider {
     return session;
   }
 
-  /** Lets a tool call through only if the app's own policy check passes. */
+  /**
+   * Lets a tool call through only if the app's own policy check passes: the
+   * main agent's, or the subagent's own when the call comes from its session.
+   */
   private async answer(
     server: OpencodeServer,
     ctx: RunContext,
-    sessionId: string,
-    request: PermissionRequest,
+    request: PermissionRequest & { sessionID: string },
+    /** null for the main session; undefined for one the app didn't start. */
+    agent: string | null | undefined,
   ) {
-    const reason = await permissionViolation(ctx.cwd, ctx.policy, request);
+    const policy =
+      agent === null
+        ? ctx.policy
+        : ctx.subagents.find((s) => s.agent.key === agent)?.policy;
+    const reason = !policy
+      ? 'Agente sconosciuto'
+      : request.action === SUBAGENT_ACTION
+        ? delegationViolation(
+            ctx.subagents.map((s) => s.agent.key),
+            agent !== null,
+            request,
+          )
+        : await permissionViolation(ctx.cwd, policy, request);
     if (reason) {
       this.logger.warn(
         `Denied ${request.action} ${request.resources.join(', ')}: ${reason}`,
@@ -359,7 +403,7 @@ export class OpencodeProvider implements AgentProvider {
     }
     await server.request(
       'POST',
-      `/api/session/${sessionId}/permission/${encodeURIComponent(request.id)}/reply`,
+      `/api/session/${request.sessionID}/permission/${encodeURIComponent(request.id)}/reply`,
       reason ? { decision: 'reject', message: reason } : { decision: 'once' },
     );
   }
@@ -403,7 +447,14 @@ export class OpencodeProvider implements AgentProvider {
     await mkdir(config);
     await writeFile(
       join(config, 'opencode.json'),
-      JSON.stringify(runConfig(await localConfig(), files?.agent, files?.mcp)),
+      JSON.stringify(
+        runConfig(
+          await localConfig(),
+          files?.agent,
+          files?.mcp,
+          files?.subagents,
+        ),
+      ),
       { mode: 0o600 },
     );
     for (const skill of files?.skills ?? []) {

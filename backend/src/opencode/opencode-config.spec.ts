@@ -70,6 +70,36 @@ describe('runConfig', () => {
   });
 });
 
+describe('runConfig subagents', () => {
+  it('adds the subagents next to the app agent', () => {
+    const config = runConfig(
+      {},
+      { system: 'S', steps: 5, permissions: [] },
+      {},
+      {
+        agent_reviewer: {
+          description: 'D',
+          system: 'R',
+          steps: 3,
+          permissions: [],
+          model: 'p/m',
+        },
+      },
+    );
+    expect(config.agents).toEqual({
+      app: { mode: 'primary', system: 'S', steps: 5, permissions: [] },
+      agent_reviewer: {
+        mode: 'subagent',
+        description: 'D',
+        system: 'R',
+        steps: 3,
+        permissions: [],
+        model: 'p/m',
+      },
+    });
+  });
+});
+
 describe('mcpServer', () => {
   it('maps stdio and http servers, with ${VAR} filled in', () => {
     process.env.OC_TEST_TOKEN = 'secret';

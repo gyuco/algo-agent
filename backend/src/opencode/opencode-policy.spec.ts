@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentPolicy } from '../agents/policy.js';
 import {
+  delegationViolation,
   permissionRules,
   permissionViolation,
   type PermissionRequest,
@@ -134,5 +135,32 @@ describe('permissionViolation', () => {
     expect(
       await permissionViolation(cwd, policy('write'), request('shell', ['ls'])),
     ).toMatch(/non è consentito/);
+  });
+});
+
+describe('delegation', () => {
+  it('offers only the named subagents, under their prefixed ids', () => {
+    expect(permissionRules(policy('none'), ['reviewer']).at(-1)).toEqual({
+      action: 'subagent',
+      resource: 'agent_reviewer',
+      effect: 'ask',
+    });
+  });
+
+  it("lets only the main agent delegate, and only to the project's agents", () => {
+    const ask = (resources: string[]) => request('subagent', resources);
+    expect(
+      delegationViolation(['reviewer'], false, ask(['agent_reviewer'])),
+    ).toBeNull();
+    expect(
+      delegationViolation(['reviewer'], true, ask(['agent_reviewer'])),
+    ).not.toBeNull();
+    expect(
+      delegationViolation(['reviewer'], false, ask(['general'])),
+    ).not.toBeNull();
+    expect(
+      delegationViolation(['reviewer'], false, ask(['agent_coder'])),
+    ).not.toBeNull();
+    expect(delegationViolation(['reviewer'], false, ask([]))).not.toBeNull();
   });
 });

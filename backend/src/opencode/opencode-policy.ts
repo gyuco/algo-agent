@@ -21,6 +21,9 @@ export interface PermissionRequest {
 }
 
 const READ_ACTIONS = ['read', 'glob', 'grep'];
+/** OpenCode's tool, and permission action, for running a subagent in a child session. */
+export const SUBAGENT_ACTION = 'subagent';
+const SUBAGENT_PREFIX = 'agent_';
 /** OpenCode's write tool asks for `edit` too. */
 const WRITE_ACTIONS = ['edit'];
 
@@ -34,14 +37,36 @@ export function mcpServerName(key: string) {
   return `mcp-${key}`;
 }
 const MCP_ACTION = /^mcp-([a-z0-9][a-z0-9-]*)_(.+)$/;
+
+/**
+ * A catalog agent's id as an OpenCode subagent. The prefix keeps it apart
+ * from OpenCode's own agents (`general`, `explore`…), whose built-in
+ * permissions would otherwise be merged in, and from the app's main agent;
+ * keys have no `_`, so no catalog key can produce another one's id.
+ */
+export function subagentId(key: string) {
+  return `${SUBAGENT_PREFIX}${key}`;
+}
+
+/** The catalog key of a subagent id, or null for any other agent. */
+export function subagentKey(id: string): string | null {
+  return id.startsWith(SUBAGENT_PREFIX)
+    ? id.slice(SUBAGENT_PREFIX.length)
+    : null;
+}
 const APP_ACTION = new RegExp(`^${APP_SERVER}_(.+)$`);
 
 /**
- * Everything is denied (no shell, web, subagents, code mode, or paths outside
- * the project) except what the policy grants, which asks: each call then comes
- * back to the app, which checks it like a Claude Code tool call.
+ * Everything is denied (no shell, web, code mode, paths outside the project,
+ * or subagents other than `delegates`) except what the policy grants, which
+ * asks: each call then comes back to the app, which checks it like a Claude
+ * Code tool call. Only the subagents asked for by name are offered to the
+ * model, so OpenCode's own don't show up.
  */
-export function permissionRules(policy: AgentPolicy): PermissionRule[] {
+export function permissionRules(
+  policy: AgentPolicy,
+  delegates: string[] = [],
+): PermissionRule[] {
   const actions = [
     ...(policy.files === 'none' ? [] : READ_ACTIONS),
     ...(policy.files === 'write' ? WRITE_ACTIONS : []),
@@ -56,7 +81,31 @@ export function permissionRules(policy: AgentPolicy): PermissionRule[] {
       resource: '*',
       effect: 'ask',
     })),
+    ...delegates.map((key): PermissionRule => ({
+      action: SUBAGENT_ACTION,
+      resource: subagentId(key),
+      effect: 'ask',
+    })),
   ];
+}
+
+/**
+ * Why a request to run a subagent must be rejected, or null when the main
+ * thread may delegate to every agent it names. Subagents can't delegate.
+ */
+export function delegationViolation(
+  delegates: string[],
+  fromSubagent: boolean,
+  request: PermissionRequest,
+): string | null {
+  if (fromSubagent) return 'Un agente delegato non può delegare a sua volta';
+  const unknown = request.resources.find((id) => {
+    const key = subagentKey(id);
+    return !key || !delegates.includes(key);
+  });
+  return unknown === undefined && request.resources.length
+    ? null
+    : `L'agente ${unknown ?? '?'} non è disponibile in questo progetto`;
 }
 
 const text = (value: unknown) =>

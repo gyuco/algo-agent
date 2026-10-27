@@ -71,6 +71,13 @@ export interface AgentConfig {
   permissions: PermissionRule[];
 }
 
+/** An agent the main one may delegate to, by its OpenCode id (see `subagentId`). */
+export interface SubagentConfig extends AgentConfig {
+  description: string;
+  /** `<providerID>/<model id>`; the main agent's model when omitted. */
+  model?: string;
+}
+
 /** Tools are offered to the model directly, not through OpenCode's Code Mode. */
 const DIRECT = { codemode: false } as const;
 
@@ -103,17 +110,27 @@ export function appToolsServer(url: string, token: string) {
   };
 }
 
-/** Config of one run: the user's providers, the app's agent and the MCP servers it may use, nothing else. */
+/**
+ * Config of one run: the user's providers, the app's agent, the subagents it
+ * may delegate to and the MCP servers they may use, nothing else.
+ */
 export function runConfig(
   local: Record<string, unknown>,
   agent?: AgentConfig,
   mcp: Record<string, Record<string, unknown>> = {},
+  subagents: Record<string, SubagentConfig> = {},
 ): Record<string, unknown> {
+  const delegates = Object.fromEntries(
+    Object.entries(subagents).map(([id, config]) => [
+      id,
+      { mode: 'subagent', ...config },
+    ]),
+  );
   return {
     ...local,
     ...(agent && {
       default_agent: APP_AGENT,
-      agents: { [APP_AGENT]: { mode: 'primary', ...agent } },
+      agents: { [APP_AGENT]: { mode: 'primary', ...agent }, ...delegates },
     }),
     ...(Object.keys(mcp).length && { mcp: { servers: mcp } }),
   };

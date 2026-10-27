@@ -60,7 +60,8 @@ function directAgent(policy: AgentPolicy, subagents: Subagent[]): AgentSpec {
   const delegation = subagents.length
     ? [
         '',
-        'You can delegate a self-contained task to one of these agents with the Agent tool, naming it as subagent_type.',
+        'You can delegate a self-contained task to one of these agents with your tool for running subagents, naming the agent.',
+        'Run it in the foreground and wait for its result; never in the background.',
         'Delegate when the task matches what an agent is for; otherwise do the work yourself.',
         'Each agent has its own permissions and sees only the prompt you give it, so make that prompt complete.',
         ...subagents.map((s) => `- ${s.agent.key}: ${s.agent.description}`),

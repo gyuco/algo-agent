@@ -70,4 +70,89 @@ describe('TurnEvents', () => {
     ).toBe(false);
     expect(turn.concerns({ type: 'server.connected', data: {} })).toBe(false);
   });
+
+  it('follows a subagent in its child session as part of its delegation', () => {
+    const child = (type: string, data: Record<string, unknown> = {}) => ({
+      type,
+      data: { sessionID: 'ses_child', ...data },
+    });
+    const turn = new TurnEvents(SID);
+    const events: OpencodeEvent[] = [
+      ev('session.tool.input.started', { id: 'c1', name: 'subagent' }),
+      ev('session.tool.called', {
+        id: 'c1',
+        input: {
+          agent: 'agent_reviewer',
+          description: 'Review',
+          prompt: 'Look at a.ts',
+        },
+      }),
+      {
+        type: 'session.created',
+        data: {
+          sessionID: 'ses_child',
+          parentID: SID,
+          agent: 'agent_reviewer',
+        },
+      },
+      ev('session.tool.progress', {
+        id: 'c1',
+        metadata: { sessionID: 'ses_child', status: 'running' },
+      }),
+      child('session.tool.input.started', { id: 'c2', name: 'read' }),
+      child('session.tool.called', { id: 'c2', input: { path: 'a.ts' } }),
+      child('session.text.started'),
+      child('session.text.delta', { delta: 'All good' }),
+      child('session.step.ended', { cost: 0.1 }),
+      child('session.execution.succeeded'),
+      ev('session.tool.success', { id: 'c1' }),
+      ev('session.execution.succeeded'),
+    ];
+    const out: ChatEvent[] = [];
+    for (const event of events) {
+      expect(turn.concerns(event)).toBe(true);
+      out.push(...turn.map(event));
+    }
+    expect(out.slice(0, -1)).toEqual([
+      {
+        type: 'delegation',
+        id: 'c1',
+        agent: 'reviewer',
+        description: 'Review',
+        prompt: 'Look at a.ts',
+      },
+      { type: 'tool', name: 'read', target: 'a.ts', delegation: 'c1' },
+      { type: 'text', text: 'All good', delegation: 'c1' },
+      { type: 'delegation_done', id: 'c1', isError: false },
+    ]);
+    // The child finishing doesn't end the turn; the main session does.
+    expect(out.at(-1)).toMatchObject({ type: 'done', costUsd: 0.1 });
+    expect(turn.agentOf('ses_child')).toBe('reviewer');
+    expect(turn.agentOf(SID)).toBeNull();
+    expect(turn.agentOf('ses_other')).toBeUndefined();
+  });
+
+  it('ignores sessions started by someone else', () => {
+    const turn = new TurnEvents(SID);
+    expect(
+      turn.concerns({
+        type: 'session.created',
+        data: { sessionID: 'ses_x', parentID: 'ses_other' },
+      }),
+    ).toBe(false);
+  });
+
+  it('closes delegations left open when the turn ends', () => {
+    const { out } = run([
+      ev('session.tool.input.started', { id: 'c1', name: 'subagent' }),
+      ev('session.tool.called', { id: 'c1', input: { agent: 'agent_a' } }),
+      ev('session.execution.interrupted'),
+    ]);
+    expect(out).toContainEqual({
+      type: 'delegation_done',
+      id: 'c1',
+      isError: true,
+    });
+    expect(out.at(-1)?.type).toBe('done');
+  });
 });
