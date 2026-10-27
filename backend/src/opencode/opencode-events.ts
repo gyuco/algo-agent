@@ -207,7 +207,7 @@ export class TurnEvents {
   }
 }
 
-function target(input: Record<string, unknown>) {
+export function target(input: Record<string, unknown>) {
   const value = input.path ?? input.pattern ?? null;
   return typeof value === 'string' ? value : null;
 }

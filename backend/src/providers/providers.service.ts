@@ -79,10 +79,15 @@ export class ProvidersService {
     return this.get(id).disconnect(userId);
   }
 
+  /** The providers the user connected, in the order they are offered. */
+  async connected(userId: number): Promise<AgentProvider[]> {
+    const connected = await this.connections.connected(userId);
+    return this.providers.filter((p) => connected.includes(p.id));
+  }
+
   /** The provider used when neither the chat nor the agent names a model: the first one connected. */
   async defaultFor(userId: number): Promise<AgentProvider> {
-    const connected = await this.connections.connected(userId);
-    const provider = this.providers.find((p) => connected.includes(p.id));
+    const [provider] = await this.connected(userId);
     if (!provider) {
       throw new BadRequestException(
         'Nessun provider connesso: collegane uno in Connessioni',

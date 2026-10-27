@@ -34,6 +34,20 @@ const MAX_ATTACHMENT_BASE64 = 7_000_000;
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
+/** `<provider>:<session id>`, as the `session` event returns it. */
+const SESSION_REF = /^[a-z0-9-]{1,32}:[A-Za-z0-9_-]{1,128}$/;
+
+export class SessionsQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  projectId: number;
+}
+
+export class SessionParamsDto {
+  @Matches(SESSION_REF)
+  sessionId: string;
+}
+
 export class WorkspaceDto {
   @Transform(trim)
   @IsString()
@@ -82,7 +96,7 @@ export class ChatMessageDto {
 
   /** Session to continue, as the `session` event returned it; omitted for a new conversation. */
   @IsOptional()
-  @Matches(/^[a-z0-9-]{1,32}:[A-Za-z0-9_-]{1,128}$/)
+  @Matches(SESSION_REF)
   sessionId?: string;
 
   /** `<provider>:<model>`, as listed by /connections; the agent's model when omitted. */

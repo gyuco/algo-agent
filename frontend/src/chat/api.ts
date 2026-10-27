@@ -43,7 +43,49 @@ export interface SendMessage {
   model?: string;
 }
 
+/** A past conversation of the project. */
+export interface SessionSummary {
+  sessionId: string;
+  provider: string;
+  title: string;
+  updatedAt: string;
+}
+
+export interface HistoryTool {
+  name: string;
+  target: string | null;
+}
+
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  text: string;
+  /** Names and types only: the files' content isn't kept. */
+  attachments: { name: string; mediaType: string }[];
+  tools: HistoryTool[];
+  delegations: {
+    id: string;
+    agent: string;
+    description: string;
+    prompt: string;
+    text: string;
+    tools: HistoryTool[];
+    isError: boolean;
+  }[];
+}
+
+export interface SessionHistory {
+  sessionId: string;
+  provider: string;
+  messages: HistoryMessage[];
+}
+
 export const chatApi = {
+  sessions: (projectId: number) =>
+    api<SessionSummary[]>(`/chat/sessions?projectId=${projectId}`),
+  history: (projectId: number, sessionId: string) =>
+    api<SessionHistory>(
+      `/chat/sessions/${encodeURIComponent(sessionId)}?projectId=${projectId}`,
+    ),
   workspace: (path: string) =>
     api<Workspace>("/chat/workspace", {
       method: "POST",

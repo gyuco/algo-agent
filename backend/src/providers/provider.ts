@@ -70,6 +70,41 @@ export interface RunContext {
   signal: AbortSignal;
 }
 
+/** A past conversation in a project folder. */
+export interface SessionSummary {
+  /** The provider's own id, as `RunContext.sessionId` takes it. */
+  id: string;
+  title: string;
+  /** ISO date of the last message. */
+  updatedAt: string;
+}
+
+export interface ToolCall {
+  name: string;
+  target: string | null;
+}
+
+/** A task the main thread delegated, as a past conversation records it. */
+export interface HistoryDelegation {
+  id: string;
+  agent: string;
+  description: string;
+  prompt: string;
+  text: string;
+  tools: ToolCall[];
+  isError: boolean;
+}
+
+/** One message of a past conversation, in no provider's format. */
+export interface HistoryMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  /** Files the user attached; their content is left out. */
+  attachments: { name: string; mediaType: string }[];
+  tools: ToolCall[];
+  delegations: HistoryDelegation[];
+}
+
 export interface ModelOption {
   value: string;
   displayName: string;
@@ -115,4 +150,12 @@ export interface AgentProvider {
   status(userId: number): Promise<ProviderStatus>;
   disconnect(userId: number): Promise<void>;
   run(ctx: RunContext): AsyncGenerator<ChatEvent>;
+  /** Conversations held in `cwd` (resolved project folder), newest first. */
+  sessions(userId: number, cwd: string): Promise<SessionSummary[]>;
+  /** A conversation's messages; null when it isn't one of `cwd`'s. */
+  history(
+    userId: number,
+    cwd: string,
+    sessionId: string,
+  ): Promise<HistoryMessage[] | null>;
 }

@@ -1,9 +1,12 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
+  Query,
   Req,
   Res,
 } from '@nestjs/common';
@@ -11,7 +14,12 @@ import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
 import { closeSignal, sendEvents } from '../common/sse.js';
 import { ChatService } from './chat.service.js';
-import { ChatMessageDto, WorkspaceDto } from './dto/chat.dto.js';
+import {
+  ChatMessageDto,
+  SessionParamsDto,
+  SessionsQueryDto,
+  WorkspaceDto,
+} from './dto/chat.dto.js';
 
 @Controller('chat')
 export class ChatController {
@@ -31,5 +39,21 @@ export class ChatController {
     @Body() dto: ChatMessageDto,
   ) {
     await sendEvents(res, this.chat.send(req.user.sub, dto, closeSignal(res)));
+  }
+
+  /** The project's past conversations, newest first. */
+  @Get('sessions')
+  sessions(@Req() req: AuthenticatedRequest, @Query() query: SessionsQueryDto) {
+    return this.chat.sessions(req.user.sub, query.projectId);
+  }
+
+  /** A past conversation's messages, to show it and continue it. */
+  @Get('sessions/:sessionId')
+  history(
+    @Req() req: AuthenticatedRequest,
+    @Param() params: SessionParamsDto,
+    @Query() query: SessionsQueryDto,
+  ) {
+    return this.chat.history(req.user.sub, query.projectId, params.sessionId);
   }
 }

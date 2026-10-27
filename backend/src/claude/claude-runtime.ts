@@ -67,7 +67,7 @@ export async function skillsPlugin(parent: string, skills: SkillSpec[]) {
 }
 
 /** Claude Code's tool for handing a task to a subagent (called Task before). */
-const AGENT_TOOLS = ['Agent', 'Task'];
+export const AGENT_TOOLS = ['Agent', 'Task'];
 
 /**
  * What a subagent must not use: whatever the main thread has and its own
@@ -316,7 +316,7 @@ export function turnState(): TurnState {
 const text = (value: unknown) => (typeof value === 'string' ? value : '');
 
 /** Where the target of a tool call is, for the chat to show. */
-function toolTarget(input: Record<string, unknown>) {
+export function toolTarget(input: Record<string, unknown>) {
   const target = input.file_path ?? input.pattern ?? input.path ?? null;
   return typeof target === 'string' ? target : null;
 }

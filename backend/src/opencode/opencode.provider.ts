@@ -17,6 +17,7 @@ import type {
   ModelOption,
   ProviderStatus,
   RunContext,
+  SessionSummary,
 } from '../providers/provider.js';
 import { APP_SERVER } from '../agents/policy.js';
 import {
@@ -29,6 +30,12 @@ import {
   type SubagentConfig,
 } from './opencode-config.js';
 import { TurnEvents } from './opencode-events.js';
+import {
+  childSession,
+  subagentCalls,
+  toHistory,
+  type OpencodeMessage,
+} from './opencode-history.js';
 import {
   SUBAGENT_ACTION,
   delegationViolation,
@@ -46,6 +53,9 @@ export const OPENCODE = 'opencode';
 const MCP_START_TIMEOUT_MS = 30_000;
 /** OpenCode registers a server's tools a moment after reporting it connected. */
 const MCP_SETTLE_MS = 500;
+/** Past conversations listed per project. */
+const SESSIONS_LIMIT = 50;
+const MESSAGES_PAGE = 200;
 
 type McpServers = Record<string, Record<string, unknown>>;
 
@@ -78,6 +88,11 @@ interface SessionInfo {
   agent?: string;
   model?: { id: string; providerID: string };
   location: { directory: string };
+}
+
+interface SessionListItem extends SessionInfo {
+  title?: string;
+  time: { updated: number };
 }
 
 /** `<providerID>/<model id>`, the form OpenCode itself lists models in. */
@@ -170,6 +185,81 @@ export class OpencodeProvider implements AgentProvider {
 
   async disconnect(userId: number): Promise<void> {
     await this.connections.remove(userId, OPENCODE);
+  }
+
+  /** The app's conversations in the folder; OpenCode's other sessions there are the user's own. */
+  async sessions(userId: number, cwd: string): Promise<SessionSummary[]> {
+    await this.assertConnected(userId);
+    return this.withServer(userId, async (server) => {
+      const query = new URLSearchParams({
+        directory: cwd,
+        parentID: 'null',
+        order: 'desc',
+        limit: String(SESSIONS_LIMIT),
+      });
+      const { data } = await server.request<{ data: SessionListItem[] }>(
+        'GET',
+        `/api/session?${query}`,
+      );
+      return Promise.all(
+        data
+          .filter((s) => s.agent === APP_AGENT && s.location.directory === cwd)
+          .map(async (s) => ({
+            id: s.id,
+            title: s.title ?? (await this.firstPrompt(server, s.id)),
+            updatedAt: new Date(s.time.updated).toISOString(),
+          })),
+      );
+    });
+  }
+
+  async history(userId: number, cwd: string, sessionId: string) {
+    await this.assertConnected(userId);
+    return this.withServer(userId, async (server) => {
+      let session: SessionInfo;
+      try {
+        ({ data: session } = await server.request<{ data: SessionInfo }>(
+          'GET',
+          `/api/session/${encodeURIComponent(sessionId)}`,
+        ));
+      } catch (error) {
+        if (error instanceof OpencodeError && error.status === 404) return null;
+        throw error;
+      }
+      if (session.location.directory !== cwd) return null;
+      const messages = await this.messages(server, session.id);
+      const children = new Map<string, OpencodeMessage[]>();
+      for (const call of subagentCalls(messages)) {
+        const child = childSession(call);
+        if (child) children.set(call.id, await this.messages(server, child));
+      }
+      return toHistory(messages, children);
+    });
+  }
+
+  /** All of a session's messages, oldest first. */
+  private async messages(server: OpencodeServer, sessionId: string) {
+    const base = `/api/session/${encodeURIComponent(sessionId)}/message?limit=${MESSAGES_PAGE}`;
+    const messages: OpencodeMessage[] = [];
+    let page = `${base}&order=asc`;
+    for (;;) {
+      const { data, cursor } = await server.request<{
+        data: OpencodeMessage[];
+        cursor?: { next?: string };
+      }>('GET', page);
+      messages.push(...data);
+      if (data.length < MESSAGES_PAGE || !cursor?.next) return messages;
+      page = `${base}&cursor=${encodeURIComponent(cursor.next)}`;
+    }
+  }
+
+  /** What the user first asked, for a session OpenCode hasn't titled yet. */
+  private async firstPrompt(server: OpencodeServer, sessionId: string) {
+    const { data } = await server.request<{ data: OpencodeMessage[] }>(
+      'GET',
+      `/api/session/${encodeURIComponent(sessionId)}/message?order=asc&limit=1&type=user`,
+    );
+    return data[0]?.text ?? '';
   }
 
   async *run(ctx: RunContext): AsyncGenerator<ChatEvent> {
@@ -412,9 +502,7 @@ export class OpencodeProvider implements AgentProvider {
   private async probe(
     userId: number,
   ): Promise<Pick<ProviderStatus, 'version' | 'models'>> {
-    const runDir = await this.runDir(userId);
-    const server = await this.start(runDir);
-    try {
+    return this.withServer(userId, async (server) => {
       const info = await server.request<{ version: string }>(
         'GET',
         '/api/info',
@@ -432,8 +520,23 @@ export class OpencodeProvider implements AgentProvider {
             displayName: `${m.name} · ${m.providerID}`,
           })),
       };
+    });
+  }
+
+  /** Runs `fn` against a short-lived server that knows only the user's providers. */
+  private async withServer<T>(
+    userId: number,
+    fn: (server: OpencodeServer) => Promise<T>,
+  ): Promise<T> {
+    const runDir = await this.runDir(userId);
+    try {
+      const server = await this.start(runDir);
+      try {
+        return await fn(server);
+      } finally {
+        server.close();
+      }
     } finally {
-      server.close();
       await rm(runDir, { recursive: true, force: true });
     }
   }

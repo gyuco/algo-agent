@@ -1,4 +1,8 @@
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk';
+import {
+  listSessions,
+  query,
+  type Options,
+} from '@anthropic-ai/claude-agent-sdk';
 import Anthropic from '@anthropic-ai/sdk';
 import {
   BadRequestException,
@@ -18,7 +22,9 @@ import type {
   ChatEvent,
   ProviderStatus,
   RunContext,
+  SessionSummary,
 } from '../providers/provider.js';
+import { readHistory, TranscriptStore } from './claude-history.js';
 import {
   CLAUDE,
   capabilities,
@@ -38,6 +44,8 @@ const SETUP_SESSION_TTL_MS = 10 * 60_000;
 const TOKEN_VALIDATION_TIMEOUT_MS = 60_000;
 // `claude setup-token` issues tokens valid for one year.
 const OAUTH_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60_000;
+/** Past conversations listed per project. */
+const SESSIONS_LIMIT = 50;
 
 export type ClaudeMethod = 'api_key' | 'oauth_token';
 
@@ -237,6 +245,27 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
     await this.connections.remove(userId, CLAUDE);
   }
 
+  async sessions(userId: number, cwd: string): Promise<SessionSummary[]> {
+    const sessions = await listSessions({
+      dir: cwd,
+      sessionStore: new TranscriptStore(this.configDir(userId)),
+      limit: SESSIONS_LIMIT,
+    });
+    return sessions.map((s) => ({
+      id: s.sessionId,
+      title: s.summary,
+      updatedAt: new Date(s.lastModified).toISOString(),
+    }));
+  }
+
+  history(userId: number, cwd: string, sessionId: string) {
+    return readHistory(
+      new TranscriptStore(this.configDir(userId)),
+      cwd,
+      sessionId,
+    );
+  }
+
   /** Yields chat events as Claude Code streams them. */
   async *run(ctx: RunContext): AsyncGenerator<ChatEvent> {
     const credential = await this.credentialFor(ctx.userId);
@@ -314,11 +343,16 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
    * is per user so the runtime never falls back to a Claude login present on
    * the host: the only credential it sees is the one passed here.
    */
+  /** Where Claude Code keeps a user's state, transcripts included. */
+  private configDir(userId: number) {
+    return join(process.cwd(), '.claude-runtime', String(userId));
+  }
+
   private async agentEnv(
     userId: number,
     credential?: Credential,
   ): Promise<Record<string, string>> {
-    const configDir = join(process.cwd(), '.claude-runtime', String(userId));
+    const configDir = this.configDir(userId);
     await mkdir(configDir, { recursive: true, mode: 0o700 });
     return {
       PATH: process.env.PATH ?? '',

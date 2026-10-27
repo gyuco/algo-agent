@@ -12,7 +12,8 @@ import type { AgentResource } from "../agents/api";
 import type { ConnectionStatus } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
-import { chatApi, type Workspace } from "./api";
+import { chatApi, type HistoryMessage, type Workspace } from "./api";
+import { SessionList } from "./Sessions";
 import {
   AgentTrail,
   DelegationCard,
@@ -92,6 +93,8 @@ export function ChatPanel({
   const [sessionId, setSessionId] = useState<string | undefined>();
   /** Provider the conversation runs on: it can't move to another one. */
   const [sessionProvider, setSessionProvider] = useState<string | undefined>();
+  /** Past conversations shown in place of the chat. */
+  const [showSessions, setShowSessions] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(0);
@@ -353,6 +356,43 @@ export function ChatPanel({
     setFocus(null);
   }
 
+  /** A past conversation as the chat's own: shown, and continued by the next message. */
+  async function openSession(id: string) {
+    const history = await chatApi.history(projectId, id);
+    setMessages(history.messages.map(fromHistory));
+    setSessionId(history.sessionId);
+    setSessionProvider(history.provider);
+    const provider = connections.find((c) =>
+      c.models.some((m) => m.value === model),
+    )?.provider;
+    if (provider && provider !== history.provider) setModel("");
+    setFocus(null);
+    setShowSessions(false);
+    stickRef.current = true;
+  }
+
+  function fromHistory(m: HistoryMessage): Message {
+    return {
+      id: nextId.current++,
+      role: m.role,
+      text: m.text,
+      attachments: m.attachments.map((a) => ({
+        name: a.name,
+        mediaType: a.mediaType as Attachment["mediaType"],
+        data: "",
+      })),
+      tools: m.tools,
+      delegations: m.delegations.map(({ isError, ...d }) => ({
+        ...d,
+        status: isError ? "failed" : "done",
+      })),
+    };
+  }
+
+  function providerLabel(provider: string) {
+    return connections.find((c) => c.provider === provider)?.label ?? provider;
+  }
+
   /** A conversation belongs to one provider: a model of another one starts a new conversation. */
   function chooseModel(value: string) {
     const provider = connections.find((c) =>
@@ -398,12 +438,26 @@ export function ChatPanel({
             {workspace.entries.length > 6 && ", …"}
           </small>
         )}
+        {workspace && (
+          <button
+            type="button"
+            className="link"
+            disabled={streaming}
+            aria-pressed={showSessions}
+            onClick={() => setShowSessions((shown) => !shown)}
+          >
+            {t("chat.history")}
+          </button>
+        )}
         {sessionId && (
           <button
             type="button"
             className="link"
             disabled={streaming}
-            onClick={newConversation}
+            onClick={() => {
+              newConversation();
+              setShowSessions(false);
+            }}
           >
             {t("chat.newConversation")}
           </button>
@@ -418,12 +472,23 @@ export function ChatPanel({
 
       {workspace && (
         <>
+          {showSessions && (
+            <div className="messages">
+              <SessionList
+                projectId={projectId}
+                current={sessionId}
+                providerLabel={providerLabel}
+                onOpen={openSession}
+                onBack={() => setShowSessions(false)}
+              />
+            </div>
+          )}
           <AgentTrail
-            delegations={delegations}
+            delegations={showSessions ? [] : delegations}
             focus={focused ? focus : null}
             onFocus={setFocus}
           />
-          {focused && (
+          {focused && !showSessions && (
             <div className="messages" aria-live="polite">
               <DelegationView
                 delegation={focused}
@@ -437,7 +502,7 @@ export function ChatPanel({
             aria-live="polite"
             ref={listRef}
             onScroll={onScroll}
-            hidden={Boolean(focused)}
+            hidden={Boolean(focused) || showSessions}
           >
             {messages.length === 0 && (
               <div className="chat-empty hint">
@@ -631,15 +696,20 @@ function AttachmentList({
       {attachments.map((a, i) => (
         <li
           key={i}
-          className={isImage(a) ? "attachment image" : "attachment"}
+          className={isImage(a) && a.data ? "attachment image" : "attachment"}
           title={a.name}
         >
-          {isImage(a) ? (
+          {/* A past conversation's attachments come without their content. */}
+          {isImage(a) && a.data ? (
             <img src={previewUrl(a)} alt={a.name} />
           ) : (
             <>
               <span className="ext">
-                {a.mediaType === "application/pdf" ? "PDF" : "TXT"}
+                {isImage(a)
+                  ? "IMG"
+                  : a.mediaType === "application/pdf"
+                    ? "PDF"
+                    : "TXT"}
               </span>
               <span className="name">{a.name}</span>
             </>

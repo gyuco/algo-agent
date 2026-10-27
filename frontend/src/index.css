@@ -1206,3 +1206,37 @@ button.delegation-card.failed {
 .delegated-task small {
   align-self: flex-end;
 }
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+button.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+}
+
+button.session-item:hover:not(:disabled),
+button.session-item.current {
+  border-color: var(--accent);
+}
+
+.session-title {
+  overflow: hidden;
+  color: var(--text-h);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
