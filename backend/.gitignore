@@ -1,0 +1,9 @@
+node_modules
+dist
+# Keep environment variables out of version control
+.env
+*.db
+*.db-journal
+
+/src/generated/prisma
+.claude-runtime

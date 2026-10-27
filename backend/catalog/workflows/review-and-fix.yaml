@@ -1,0 +1,15 @@
+description: Il revisore analizza il codice (sola lettura), poi l'assistente applica le correzioni.
+enabledByDefault: true
+input: Cosa controllare (file, cartella o tema)
+steps:
+  - agent: reviewer
+    prompt: |
+      Review the following part of the project and list concrete problems:
+      {{input}}
+  - agent: assistant
+    prompt: |
+      A reviewer found these problems in the project:
+
+      {{previous}}
+
+      Fix the ones that are clearly correct to fix. Skip anything uncertain and say why.

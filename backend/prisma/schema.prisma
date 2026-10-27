@@ -1,0 +1,102 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  claudeCredential ClaudeCredential?
+  projects         Project[]
+  resources        Resource[]
+}
+
+model ClaudeCredential {
+  id              Int       @id @default(autoincrement())
+  userId          Int       @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "api_key" (ANTHROPIC_API_KEY) or "oauth_token" (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`)
+  method          String
+  secretEncrypted String
+  secretHint      String
+  /// Last plan rate-limit snapshot (JSON) seen in a Claude Code rate_limit_event; subscriptions only.
+  rateLimitJson   String?
+  rateLimitAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Project {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  /// Absolute local folder, resolved (symlinks followed) and inside WORKSPACE_ROOT.
+  path      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  resources    ProjectResource[]
+  workflowRuns WorkflowRun[]
+
+  @@unique([userId, path])
+  @@index([userId])
+}
+
+/// A resource of the user's library (agent, MCP server, skill or workflow), usable in all their projects.
+model Resource {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "agent", "mcp", "skill" or "workflow"
+  kind             String
+  key              String
+  /// Definition (JSON) validated by the catalog schema of its kind; an MCP server's env and headers are left out.
+  specJson         String
+  /// MCP env and headers (JSON), encrypted: they often hold tokens.
+  secretsEncrypted String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, kind, key])
+}
+
+/// A catalog resource switched on or off in one project; without a row the catalog's enabledByDefault applies.
+model ProjectResource {
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// "agent", "tool", "mcp", "skill" or "workflow"
+  kind      String
+  /// Key of the resource in the catalog.
+  key       String
+  enabled   Boolean
+
+  @@unique([projectId, kind, key])
+}
+
+model WorkflowRun {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Key of the workflow in the catalog.
+  workflow  String
+  input     String
+  /// "running", "done", "failed" or "aborted"
+  status    String
+  /// Steps run so far (JSON): [{ agent, output, isError }]
+  stepsJson String   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+}
