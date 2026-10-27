@@ -1,8 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
-  Get,
   HttpCode,
   HttpStatus,
   Post,
@@ -10,22 +8,25 @@ import {
   Req,
 } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
-import { ClaudeService } from './claude.service.js';
+import { toConnectionStatus } from '../providers/providers.service.js';
+import { ClaudeProvider } from './claude.provider.js';
 import { ApiKeyDto } from './dto/api-key.dto.js';
 import { CompleteSetupTokenDto, OAuthTokenDto } from './dto/oauth.dto.js';
 
-@Controller('claude')
+/** Ways to connect Claude Code; status and disconnect are under /connections. */
+@Controller('connections/claude')
 export class ClaudeController {
-  constructor(private readonly claude: ClaudeService) {}
-
-  @Get('status')
-  status(@Req() req: AuthenticatedRequest) {
-    return this.claude.status(req.user.sub);
-  }
+  constructor(private readonly claude: ClaudeProvider) {}
 
   @Put('api-key')
-  connectApiKey(@Req() req: AuthenticatedRequest, @Body() dto: ApiKeyDto) {
-    return this.claude.connectApiKey(req.user.sub, dto.apiKey);
+  async connectApiKey(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: ApiKeyDto,
+  ) {
+    return toConnectionStatus(
+      this.claude,
+      await this.claude.connectApiKey(req.user.sub, dto.apiKey),
+    );
   }
 
   @Post('setup-token')
@@ -35,34 +36,37 @@ export class ClaudeController {
 
   @Post('setup-token/complete')
   @HttpCode(HttpStatus.OK)
-  completeSetupToken(
+  async completeSetupToken(
     @Req() req: AuthenticatedRequest,
     @Body() dto: CompleteSetupTokenDto,
   ) {
-    return this.claude.completeSetupToken(
-      req.user.sub,
-      dto.sessionId,
-      dto.code,
+    return toConnectionStatus(
+      this.claude,
+      await this.claude.completeSetupToken(
+        req.user.sub,
+        dto.sessionId,
+        dto.code,
+      ),
     );
   }
 
   @Post('usage/refresh')
   @HttpCode(HttpStatus.OK)
-  refreshUsage(@Req() req: AuthenticatedRequest) {
-    return this.claude.refreshUsage(req.user.sub);
+  async refreshUsage(@Req() req: AuthenticatedRequest) {
+    return toConnectionStatus(
+      this.claude,
+      await this.claude.refreshUsage(req.user.sub),
+    );
   }
 
   @Put('oauth-token')
-  connectOAuthToken(
+  async connectOAuthToken(
     @Req() req: AuthenticatedRequest,
     @Body() dto: OAuthTokenDto,
   ) {
-    return this.claude.connectOAuthToken(req.user.sub, dto.token);
-  }
-
-  @Delete('credential')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  disconnect(@Req() req: AuthenticatedRequest) {
-    return this.claude.disconnect(req.user.sub);
+    return toConnectionStatus(
+      this.claude,
+      await this.claude.connectOAuthToken(req.user.sub, dto.token),
+    );
   }
 }

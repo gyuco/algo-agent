@@ -1,14 +1,5 @@
 import { api } from '../api/client'
-
-export interface ClaudeStatus {
-  connected: boolean
-  method: 'api_key' | 'oauth_token' | null
-  secretHint: string | null
-  subscriptionAvailable: boolean
-  runtime: { ok: boolean; error?: string } | null
-  session: ClaudeSessionInfo | null
-  error?: string
-}
+import type { ConnectionStatus } from '../connections/api'
 
 export interface RateLimitWindow {
   /** Fraction of the window used, 0-1. */
@@ -24,11 +15,11 @@ export interface RateLimitSnapshot {
   observedAt: string
 }
 
-export interface ClaudeSessionInfo {
-  claudeCodeVersion: string | null
-  models: { value: string; displayName: string }[]
-  connectedAt: string
+/** The `details` of the Claude connection. */
+export interface ClaudeDetails {
+  /** Estimated from the connection date; null for API keys, which don't expire. */
   tokenExpiresAt: string | null
+  /** Last plan usage reported by Claude Code; null until a prompt has run. */
   rateLimits: RateLimitSnapshot | null
 }
 
@@ -38,20 +29,18 @@ export interface SetupTokenStart {
 }
 
 const put = (path: string, body: unknown) =>
-  api<ClaudeStatus>(path, { method: 'PUT', body: JSON.stringify(body) })
+  api<ConnectionStatus>(path, { method: 'PUT', body: JSON.stringify(body) })
 
 export const claudeApi = {
-  status: () => api<ClaudeStatus>('/claude/status'),
-  connectApiKey: (apiKey: string) => put('/claude/api-key', { apiKey }),
-  connectOAuthToken: (token: string) => put('/claude/oauth-token', { token }),
+  connectApiKey: (apiKey: string) => put('/connections/claude/api-key', { apiKey }),
+  connectOAuthToken: (token: string) => put('/connections/claude/oauth-token', { token }),
   startSetupToken: () =>
-    api<SetupTokenStart>('/claude/setup-token', { method: 'POST' }),
+    api<SetupTokenStart>('/connections/claude/setup-token', { method: 'POST' }),
   completeSetupToken: (sessionId: string, code: string) =>
-    api<ClaudeStatus>('/claude/setup-token/complete', {
+    api<ConnectionStatus>('/connections/claude/setup-token/complete', {
       method: 'POST',
       body: JSON.stringify({ sessionId, code }),
     }),
   refreshUsage: () =>
-    api<ClaudeStatus>('/claude/usage/refresh', { method: 'POST' }),
-  disconnect: () => api<null>('/claude/credential', { method: 'DELETE' }),
+    api<ConnectionStatus>('/connections/claude/usage/refresh', { method: 'POST' }),
 }

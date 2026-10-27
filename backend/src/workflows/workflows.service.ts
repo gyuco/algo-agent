@@ -1,11 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import {
-  AgentRunnerService,
-  type ChatEvent,
-} from '../agents/agent-runner.service.js';
+import { AgentRunnerService } from '../agents/agent-runner.service.js';
 import { ProjectResourcesService } from '../agents/project-resources.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { ChatEvent } from '../providers/provider.js';
 import { ProjectsService } from '../projects/projects.service.js';
 
 export type RunStatus = 'running' | 'done' | 'failed' | 'aborted';
@@ -94,7 +92,10 @@ export class WorkflowsService {
           userId,
           project,
           agent: step.agent,
-          prompt: fill(step.prompt, input, steps.at(-2)?.output ?? ''),
+          prompt: {
+            text: fill(step.prompt, input, steps.at(-2)?.output ?? ''),
+            attachments: [],
+          },
           signal,
         })) {
           if (event.type === 'text') result.output += event.text;

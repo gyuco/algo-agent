@@ -32,7 +32,8 @@ const base = {
 const agentSchema = z
   .object({
     ...base,
-    model: z.string().max(64).optional(),
+    /** `<provider>:<model>`; a bare value is a Claude model. */
+    model: z.string().max(160).optional(),
     maxTurns: z.number().int().min(1).max(100).optional(),
     permissions: z
       .object({

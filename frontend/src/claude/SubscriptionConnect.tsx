@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { claudeApi, type SetupTokenStart } from './api'
-import type { RunAction } from './useClaudeStatus'
+import type { RunAction } from '../connections/useConnections'
 import { useI18n } from '../i18n/useI18n'
 
 interface Props {
