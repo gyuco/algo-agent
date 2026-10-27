@@ -325,3 +325,17 @@ con stato, costo e link al run.
 
 Ogni punto si può rilasciare da solo: dopo il punto 3 il problema principale, cioè il run che
 muore quando si chiude la pagina, è già risolto.
+
+## 12. Workflow a grafo
+
+[workflow-a-grafo.md](workflow-a-grafo.md) estende i workflow da sequenza a grafo. Gli effetti
+su questo documento:
+
+- lo stato `waiting` (passo in attesa di approvazione) si aggiunge al ciclo di vita del §5.2. Un
+  run in attesa non occupa posti di concorrenza e viene ripreso dallo scheduler quando l'utente
+  approva;
+- l'executor esegue i passi *pronti*, anche in parallelo, invece di quelli in ordine;
+- la ripresa del §5.6 riparte da tutti i passi non `done` né `skipped`, non dal "primo passo
+  mancante";
+- il limite `RUNS_MAX_PER_PROJECT` resta. In aggiunta, all'interno di un run solo i passi in
+  sola lettura possono girare in parallelo.
