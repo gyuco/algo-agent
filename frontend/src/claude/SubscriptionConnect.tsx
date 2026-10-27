@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { claudeApi, type SetupTokenStart } from './api'
 import type { RunAction } from './useClaudeStatus'
+import { useI18n } from '../i18n/useI18n'
 
 interface Props {
   busy: boolean
@@ -9,6 +10,7 @@ interface Props {
 
 /** Connects a Claude Pro/Max subscription through `claude setup-token`. */
 export function SubscriptionConnect({ busy, run }: Props) {
+  const { t } = useI18n()
   const [setup, setSetup] = useState<SetupTokenStart | null>(null)
   const [code, setCode] = useState('')
   const [token, setToken] = useState('')
@@ -41,29 +43,29 @@ export function SubscriptionConnect({ busy, run }: Props) {
 
   return (
     <div className="option">
-      <strong>Abbonamento Claude Pro / Max</strong>
+      <strong>{t('connect.subscriptionTitle')}</strong>
 
       {!setup ? (
         <>
           <p>
-            Avvia <code>claude setup-token</code>: si apre la pagina di Anthropic
-            dove autorizzi l'accesso e ricevi un codice.
+            {t('connect.setupLead')} <code>claude setup-token</code>
+            {t('connect.setupTail')}
           </p>
           <button type="button" disabled={busy} onClick={start}>
-            {busy ? 'Avvio…' : 'Collega abbonamento'}
+            {busy ? t('connect.starting') : t('connect.subscribe')}
           </button>
         </>
       ) : (
         <form onSubmit={complete} className="stack">
           <p>
-            Autorizza su{' '}
+            {t('connect.authorizeLead')}{' '}
             <a href={setup.authorizeUrl} target="_blank" rel="noopener noreferrer">
               claude.com
             </a>{' '}
-            (se la pagina non si è aperta), poi incolla qui il codice.
+            {t('connect.authorizeTail')}
           </p>
           <label>
-            Codice di autorizzazione
+            {t('connect.authCode')}
             <input
               autoComplete="off"
               required
@@ -74,23 +76,23 @@ export function SubscriptionConnect({ busy, run }: Props) {
           </label>
           <div className="row">
             <button type="submit" disabled={busy}>
-              {busy ? 'Verifico…' : 'Conferma'}
+              {busy ? t('connect.verifying') : t('connect.confirm')}
             </button>
             <button type="button" className="secondary" disabled={busy} onClick={() => setSetup(null)}>
-              Annulla
+              {t('connect.cancel')}
             </button>
           </div>
         </form>
       )}
 
       <details>
-        <summary>Hai già un token di accesso?</summary>
+        <summary>{t('connect.hasToken')}</summary>
         <form onSubmit={paste} className="stack">
           <p>
-            Generalo da terminale con <code>claude setup-token</code> e incollalo qui.
+            {t('connect.tokenLead')} <code>claude setup-token</code> {t('connect.tokenTail')}
           </p>
           <label>
-            Token di accesso
+            {t('connect.tokenLabel')}
             <input
               type="password"
               autoComplete="off"
@@ -101,7 +103,7 @@ export function SubscriptionConnect({ busy, run }: Props) {
             />
           </label>
           <button type="submit" disabled={busy}>
-            {busy ? 'Verifico…' : 'Salva token'}
+            {busy ? t('connect.verifying') : t('connect.saveToken')}
           </button>
         </form>
       </details>

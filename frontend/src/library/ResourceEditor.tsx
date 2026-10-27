@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import { FILE_ACCESS_LABEL } from '../agents/labels'
+import { FILE_ACCESS_KEY } from '../agents/labels'
+import type { MessageKey } from '../i18n/messages'
+import { useI18n } from '../i18n/useI18n'
 import {
   libraryApi,
   type AgentSpec,
@@ -12,11 +14,11 @@ import {
   type WorkflowSpec,
 } from './api'
 
-const KIND_LABEL: Record<EditableKind, string> = {
-  agent: 'Agente',
-  mcp: 'Server MCP',
-  skill: 'Skill',
-  workflow: 'Workflow',
+const KIND_KEY: Record<EditableKind, MessageKey> = {
+  agent: 'kind.agent',
+  mcp: 'kind.mcp',
+  skill: 'kind.skill',
+  workflow: 'kind.workflow',
 }
 
 const DEFAULTS: SpecByKind = {
@@ -76,6 +78,7 @@ interface Props {
 
 /** Form for one library resource; validation errors come from the server. */
 export function ResourceEditor({ kind, editing, library, onDone }: Props) {
+  const { t } = useI18n()
   const [key, setKey] = useState(editing ?? '')
   const [spec, setSpec] = useState(() => initialSpec(kind, editing, library))
   const [saving, setSaving] = useState(false)
@@ -94,7 +97,7 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
         : libraryApi.create(kind, key.trim(), spec))
       onDone(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Salvataggio non riuscito')
+      setError(err instanceof Error ? err.message : t('editor.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -102,22 +105,20 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
 
   return (
     <form className="card editor stack" onSubmit={submit}>
-      <h2>
-        {editing ? 'Modifica' : 'Nuovo'}: {KIND_LABEL[kind]}
-      </h2>
+      <h2>{t(editing ? 'editor.editTitle' : 'editor.newTitle', { kind: t(KIND_KEY[kind]) })}</h2>
       <label>
-        Nome
+        {t('editor.name')}
         <input
           value={key}
           disabled={editing !== null}
           required
           pattern="[a-z0-9][a-z0-9\-]{0,63}"
-          title="Minuscole, cifre e trattini"
+          title={t('editor.nameHint')}
           onChange={(e) => setKey(e.target.value)}
         />
       </label>
       <label>
-        Descrizione
+        {t('editor.description')}
         <input
           value={spec.description}
           required
@@ -130,7 +131,7 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
           checked={spec.enabledByDefault}
           onChange={(e) => patch({ enabledByDefault: e.target.checked })}
         />
-        Attivo di default nei progetti
+        {t('editor.enabledDefault')}
       </label>
 
       {kind === 'agent' && (
@@ -150,7 +151,7 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
       )}
       {kind === 'skill' && (
         <label>
-          Istruzioni (Markdown)
+          {t('editor.instructions')}
           <textarea
             rows={14}
             required
@@ -174,10 +175,10 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
       )}
       <div className="row end">
         <button type="button" className="secondary" onClick={() => onDone(false)}>
-          Annulla
+          {t('projects.cancel')}
         </button>
         <button type="submit" disabled={saving}>
-          Salva
+          {t('projects.save')}
         </button>
       </div>
     </form>
@@ -195,10 +196,11 @@ function Checklist({
   selected: string[]
   onChange: (next: string[]) => void
 }) {
+  const { t } = useI18n()
   return (
     <fieldset className="checklist">
       <legend>{legend}</legend>
-      {options.length === 0 && <p className="hint">Nessuno nella libreria.</p>}
+      {options.length === 0 && <p className="hint">{t('resources.none')}</p>}
       {options.map((o) => (
         <label key={o.key} className="switch" title={o.description}>
           <input
@@ -226,21 +228,22 @@ function AgentFields({
   library: Library
   onChange: (spec: AgentSpec) => void
 }) {
+  const { t } = useI18n()
   const permissions = (change: Partial<AgentSpec['permissions']>) =>
     onChange({ ...spec, permissions: { ...spec.permissions, ...change } })
   return (
     <>
       <div className="row">
         <label className="grow">
-          Modello (vuoto = quello della chat)
+          {t('editor.model')}
           <input
             value={spec.model ?? ''}
-            placeholder="es. sonnet, opus, haiku"
+            placeholder={t('editor.modelPlaceholder')}
             onChange={(e) => onChange({ ...spec, model: e.target.value || undefined })}
           />
         </label>
         <label>
-          Max turni
+          {t('editor.maxTurns')}
           <input
             type="number"
             min={1}
@@ -253,41 +256,41 @@ function AgentFields({
         </label>
       </div>
       <fieldset className="checklist">
-        <legend>Permessi</legend>
+        <legend>{t('editor.permissions')}</legend>
         <label>
-          File del progetto
+          {t('editor.projectFiles')}
           <select
             value={spec.permissions.files}
             onChange={(e) => permissions({ files: e.target.value as FileAccess })}
           >
             {(['none', 'read', 'write'] as const).map((f) => (
               <option key={f} value={f}>
-                {FILE_ACCESS_LABEL[f]}
+                {t(FILE_ACCESS_KEY[f])}
               </option>
             ))}
           </select>
         </label>
         <Checklist
-          legend="Tool"
+          legend={t('kind.tools')}
           options={library.tools}
           selected={spec.permissions.tools}
           onChange={(tools) => permissions({ tools })}
         />
         <Checklist
-          legend="Server MCP"
+          legend={t('kind.mcps')}
           options={library.mcp}
           selected={spec.permissions.mcp}
           onChange={(mcp) => permissions({ mcp })}
         />
         <Checklist
-          legend="Skill"
+          legend={t('kind.skills')}
           options={library.skills}
           selected={spec.permissions.skills}
           onChange={(skills) => permissions({ skills })}
         />
       </fieldset>
       <label>
-        Prompt di sistema
+        {t('editor.systemPrompt')}
         <textarea
           rows={10}
           required
@@ -310,6 +313,7 @@ function McpFields({
   stdioAllowed: boolean
   onChange: (spec: McpSpec) => void
 }) {
+  const { t } = useI18n()
   const { description, enabledByDefault } = spec
   const secrets = spec.type === 'stdio' ? spec.env : spec.headers
   const [secretText, setSecretText] = useState(toLines(secrets))
@@ -324,7 +328,7 @@ function McpFields({
   return (
     <>
       <label>
-        Tipo
+        {t('editor.type')}
         <select
           value={spec.type}
           onChange={(e) => {
@@ -336,15 +340,16 @@ function McpFields({
             )
           }}
         >
-          <option value="http">http (URL remoto)</option>
+          <option value="http">{t('editor.typeHttp')}</option>
           <option value="stdio" disabled={!stdioAllowed}>
-            stdio (comando locale){stdioAllowed ? '' : ' — solo in modalità personale'}
+            {t('editor.typeStdio')}
+            {stdioAllowed ? '' : t('editor.stdioPersonalOnly')}
           </option>
         </select>
       </label>
       {spec.type === 'http' ? (
         <label>
-          URL
+          {t('editor.url')}
           <input
             type="url"
             required
@@ -355,10 +360,10 @@ function McpFields({
       ) : (
         <>
           <p className="error">
-            Un server stdio esegue questo comando sul server con i privilegi del backend.
+            {t('editor.stdioWarning')}
           </p>
           <label>
-            Comando
+            {t('editor.command')}
             <input
               required
               value={spec.command}
@@ -366,7 +371,7 @@ function McpFields({
             />
           </label>
           <label>
-            Argomenti (uno per riga)
+            {t('editor.args')}
             <textarea
               rows={3}
               value={spec.args.join('\n')}
@@ -378,7 +383,7 @@ function McpFields({
         </>
       )}
       <label>
-        {spec.type === 'stdio' ? 'Variabili d’ambiente' : 'Header'} (una per riga, NOME=valore)
+        {spec.type === 'stdio' ? t('editor.envVars') : t('editor.headers')} {t('editor.perLine')}
         <textarea
           rows={3}
           value={secretText}
@@ -387,9 +392,9 @@ function McpFields({
         />
       </label>
       <p className="hint">
-        I valori sono cifrati e non vengono mai rimostrati.
-        {editing && ' Un valore lasciato vuoto mantiene quello salvato.'} Puoi usare{' '}
-        <code>{'${VARIABILE}'}</code> per leggere dall’ambiente del backend.
+        {t('editor.secretsNote')}
+        {editing && ` ${t('editor.keepSaved')}`} {t('editor.envLead')}{' '}
+        <code>{'${VARIABLE}'}</code> {t('editor.envTail')}
       </p>
     </>
   )
@@ -404,6 +409,7 @@ function WorkflowFields({
   library: Library
   onChange: (spec: WorkflowSpec) => void
 }) {
+  const { t } = useI18n()
   const setStep = (index: number, change: Partial<WorkflowSpec['steps'][number]>) =>
     onChange({
       ...spec,
@@ -412,26 +418,26 @@ function WorkflowFields({
   return (
     <>
       <label>
-        Etichetta dell’input
+        {t('editor.inputLabel')}
         <input value={spec.input} onChange={(e) => onChange({ ...spec, input: e.target.value })} />
       </label>
       <fieldset className="checklist">
-        <legend>Passi, eseguiti in ordine</legend>
+        <legend>{t('editor.stepsTitle')}</legend>
         <p className="hint">
-          Nel prompt: <code>{'{{input}}'}</code> è il testo dell’utente,{' '}
-          <code>{'{{previous}}'}</code> la risposta del passo precedente.
+          {t('editor.promptLead')} <code>{'{{input}}'}</code> {t('editor.inputMeans')}{' '}
+          <code>{'{{previous}}'}</code> {t('editor.previousMeans')}
         </p>
         <ol className="run-steps">
           {spec.steps.map((step, i) => (
             <li key={i}>
               <div className="row">
                 <select
-                  aria-label="Agente"
+                  aria-label={t('chat.agentLabel')}
                   required
                   value={step.agent}
                   onChange={(e) => setStep(i, { agent: e.target.value })}
                 >
-                  <option value="">Scegli un agente…</option>
+                  <option value="">{t('editor.chooseAgent')}</option>
                   {library.agents.map((a) => (
                     <option key={a.key} value={a.key}>
                       {a.key}
@@ -444,11 +450,11 @@ function WorkflowFields({
                   disabled={spec.steps.length === 1}
                   onClick={() => onChange({ ...spec, steps: spec.steps.filter((_, j) => j !== i) })}
                 >
-                  Rimuovi
+                  {t('editor.remove')}
                 </button>
               </div>
               <textarea
-                aria-label="Prompt"
+                aria-label={t('editor.prompt')}
                 rows={4}
                 required
                 value={step.prompt}
@@ -466,7 +472,7 @@ function WorkflowFields({
               onChange({ ...spec, steps: [...spec.steps, { agent: '', prompt: '{{previous}}' }] })
             }
           >
-            Aggiungi passo
+            {t('editor.addStep')}
           </button>
         </div>
       </fieldset>

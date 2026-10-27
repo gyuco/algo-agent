@@ -4,6 +4,7 @@ import { ResourcesPanel } from '../agents/ResourcesPanel'
 import { ChatPanel } from '../chat/ChatPanel'
 import type { ClaudeStatusState } from '../claude/useClaudeStatus'
 import { useI18n } from '../i18n/useI18n'
+import type { MessageKey } from '../i18n/messages'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
 
@@ -12,12 +13,13 @@ interface Props {
   claude: ClaudeStatusState
 }
 
-const TABS = [
-  ['chat', 'Chat'],
-  ['workflows', 'Workflow'],
-  ['resources', 'Agenti e risorse'],
-] as const
-type Tab = (typeof TABS)[number][0]
+type Tab = 'chat' | 'workflows' | 'resources'
+
+const TABS: [Tab, MessageKey][] = [
+  ['chat', 'chat.title'],
+  ['workflows', 'workspace.tabWorkflows'],
+  ['resources', 'workspace.tabResources'],
+]
 
 /** One project's workspace: chat, workflows and the agents it has on. Key it by project. */
 export function ProjectWorkspace({ projectId, claude }: Props) {
@@ -68,7 +70,7 @@ export function ProjectWorkspace({ projectId, claude }: Props) {
       {project && resources && (
         <>
           <div className="tabs" role="tablist">
-            {TABS.map(([id, label]) => (
+            {TABS.map(([id, labelKey]) => (
               <button
                 key={id}
                 type="button"
@@ -77,7 +79,7 @@ export function ProjectWorkspace({ projectId, claude }: Props) {
                 className={tab === id ? 'tab active' : 'tab'}
                 onClick={() => setTab(id)}
               >
-                {label}
+                {t(labelKey)}
               </button>
             ))}
           </div>

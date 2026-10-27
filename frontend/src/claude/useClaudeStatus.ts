@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useI18n } from '../i18n/useI18n'
 import { claudeApi, type ClaudeStatus, type RateLimitSnapshot } from './api'
 
 export type RunAction = (action: () => Promise<ClaudeStatus | void>) => Promise<void>
 
 export function useClaudeStatus() {
+  const { t } = useI18n()
   const [status, setStatus] = useState<ClaudeStatus | null>(null)
   const [checking, setChecking] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -15,10 +17,10 @@ export function useClaudeStatus() {
         .status()
         .then(setStatus)
         .catch((err: unknown) =>
-          setError(err instanceof Error ? err.message : 'Verifica non riuscita'),
+          setError(err instanceof Error ? err.message : t('verify.failed')),
         )
         .finally(() => setChecking(false)),
-    [],
+    [t],
   )
 
   useEffect(() => {
@@ -38,11 +40,11 @@ export function useClaudeStatus() {
       const next = await action()
       if (next) setStatus(next)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Operazione non riuscita')
+      setError(err instanceof Error ? err.message : t('operation.failed'))
     } finally {
       setBusy(false)
     }
-  }, [])
+  }, [t])
 
   /** Applies plan usage reported elsewhere (e.g. by a chat turn) without refetching. */
   const updateRateLimits = useCallback((rateLimits: RateLimitSnapshot) => {

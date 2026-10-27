@@ -25,18 +25,32 @@ function mediaTypeOf(file: File): Attachment['mediaType'] | null {
   return null
 }
 
-/** Reads a file for the chat, or throws a message explaining why it can't be attached. */
-export async function readAttachment(file: File): Promise<Attachment> {
+export type AttachmentProblem = 'unsupported' | 'tooLarge' | 'readFailed'
+
+/** Why a file can't be attached; the chat turns `problem` into a translated message. */
+export class AttachmentError extends Error {
+  problem: AttachmentProblem
+  fileName: string
+
+  constructor(problem: AttachmentProblem, fileName: string) {
+    super(`${fileName}: ${problem}`)
+    this.problem = problem
+    this.fileName = fileName
+  }
+}
+
+/** Reads a file for the chat, or throws an AttachmentError explaining why it can't be attached. */
+export async function readAttachment(file: File, pastedName: string): Promise<Attachment> {
   const mediaType = mediaTypeOf(file)
-  if (!mediaType) throw new Error(`${file.name}: tipo di file non supportato`)
-  if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`${file.name}: supera i 5 MB`)
+  if (!mediaType) throw new AttachmentError('unsupported', file.name)
+  if (file.size > MAX_ATTACHMENT_BYTES) throw new AttachmentError('tooLarge', file.name)
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(new Error(`${file.name}: lettura non riuscita`))
+    reader.onerror = () => reject(new AttachmentError('readFailed', file.name))
     reader.readAsDataURL(file)
   })
-  return { name: file.name || 'incollato.png', mediaType, data: dataUrl.slice(dataUrl.indexOf(',') + 1) }
+  return { name: file.name || pastedName, mediaType, data: dataUrl.slice(dataUrl.indexOf(',') + 1) }
 }
 
 export function isImage(a: Attachment) {

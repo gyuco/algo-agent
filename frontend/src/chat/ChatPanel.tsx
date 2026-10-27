@@ -7,17 +7,21 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
-import { FILE_ACCESS_LABEL } from '../agents/labels'
+import { FILE_ACCESS_KEY } from '../agents/labels'
 import type { AgentResource } from '../agents/api'
 import type { ClaudeSessionInfo, RateLimitSnapshot } from '../claude/api'
+import type { MessageKey } from '../i18n/messages'
+import { useI18n } from '../i18n/useI18n'
 import { chatApi, type Workspace } from './api'
 import {
   ACCEPT,
+  AttachmentError,
   MAX_ATTACHMENTS,
   isImage,
   previewUrl,
   readAttachment,
   type Attachment,
+  type AttachmentProblem,
 } from './attachments'
 
 interface Tool {
@@ -44,6 +48,12 @@ function shortTarget(target: string, root: string) {
 /** Agent the chat starts with, when the project has it. */
 const DEFAULT_AGENT = 'assistant'
 
+const ATTACHMENT_KEY: Record<AttachmentProblem, MessageKey> = {
+  unsupported: 'attach.unsupported',
+  tooLarge: 'attach.tooLarge',
+  readFailed: 'attach.readFailed',
+}
+
 interface Props {
   projectId: number
   /** Project folder the agent works in. */
@@ -56,6 +66,7 @@ interface Props {
 
 /** Chat with Claude Code inside one folder; remount it (key) to switch folders. */
 export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) {
+  const { t } = useI18n()
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [model, setModel] = useState('')
@@ -100,23 +111,33 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
 
   useEffect(() => {
     chatApi.workspace(path).then(setWorkspace, (err: unknown) =>
-      setWorkspaceError(err instanceof Error ? err.message : 'Cartella non valida'),
+      setWorkspaceError(err instanceof Error ? err.message : t('workspace.invalidFolder')),
     )
-  }, [path])
+  }, [path, t])
 
   function update(id: number, change: (m: Message) => Message) {
     setMessages((list) => list.map((m) => (m.id === id ? change(m) : m)))
+  }
+
+  /** Translated reason a file couldn't be attached. */
+  function attachmentMessage(err: unknown) {
+    if (err instanceof AttachmentError) return t(ATTACHMENT_KEY[err.problem], { name: err.fileName })
+    return t('chat.attachInvalid')
   }
 
   async function attach(files: Iterable<File>) {
     setAttachError(null)
     const list = [...files]
     const room = MAX_ATTACHMENTS - attachments.length
-    if (list.length > room) setAttachError(`Al massimo ${MAX_ATTACHMENTS} allegati per messaggio`)
-    const results = await Promise.allSettled(list.slice(0, Math.max(room, 0)).map(readAttachment))
+    if (list.length > room) {
+      setAttachError(t('chat.maxAttachments', { max: String(MAX_ATTACHMENTS) }))
+    }
+    const results = await Promise.allSettled(
+      list.slice(0, Math.max(room, 0)).map((file) => readAttachment(file, t('chat.pastedName'))),
+    )
     const read = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
     const failed = results.find((r) => r.status === 'rejected')
-    if (failed) setAttachError(failed.reason instanceof Error ? failed.reason.message : 'Allegato non valido')
+    if (failed) setAttachError(attachmentMessage(failed.reason))
     setAttachments((current) => [...current, ...read].slice(0, MAX_ATTACHMENTS))
     inputRef.current?.focus()
   }
@@ -188,8 +209,11 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
           case 'done':
             update(replyId, (m) => ({
               ...m,
-              meta: `${(event.durationMs / 1000).toFixed(1)}s · ${event.turns} turni`,
-              error: event.isError ? (m.error ?? 'La risposta si è interrotta') : m.error,
+              meta: t('chat.meta', {
+                seconds: (event.durationMs / 1000).toFixed(1),
+                turns: String(event.turns),
+              }),
+              error: event.isError ? (m.error ?? t('chat.responseInterrupted')) : m.error,
             }))
             break
         }
@@ -198,14 +222,14 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
       if (!abort.signal.aborted) {
         update(replyId, (m) => ({
           ...m,
-          error: err instanceof Error ? err.message : 'Invio non riuscito',
+          error: err instanceof Error ? err.message : t('chat.sendFailed'),
         }))
       }
     } finally {
       update(replyId, (m) => ({
         ...m,
         streaming: false,
-        error: abort.signal.aborted && !m.meta ? 'Interrotta' : m.error,
+        error: abort.signal.aborted && !m.meta ? t('chat.interrupted') : m.error,
       }))
       setStreaming(false)
     }
@@ -237,7 +261,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
   return (
     <section
       className={dragging ? 'card chat dragging' : 'card chat'}
-      aria-label="Chat"
+      aria-label={t('chat.title')}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('Files')) return
         e.preventDefault()
@@ -249,7 +273,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
       onDrop={onDrop}
     >
       <div className="chat-head">
-        <h2>Chat</h2>
+        <h2>{t('chat.title')}</h2>
         {workspace && workspace.entries.length > 0 && (
           <small className="entries" title={workspace.entries.map((e) => e.name).join(', ')}>
             {workspace.entries
@@ -261,7 +285,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
         )}
         {sessionId && (
           <button type="button" className="link" disabled={streaming} onClick={newConversation}>
-            Nuova conversazione
+            {t('chat.newConversation')}
           </button>
         )}
       </div>
@@ -283,12 +307,12 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
                       <strong>{agent.key}</strong>: {agent.description}
                     </p>
                     <p>
-                      File: {FILE_ACCESS_LABEL[agent.effective.files]}, solo in{' '}
+                      {t('chat.agentAccess', { access: t(FILE_ACCESS_KEY[agent.effective.files]) })}{' '}
                       <code>{workspace.path}</code>
                     </p>
                   </>
                 ) : (
-                  <p>Nessun agente attivo in questo progetto. Attivane uno in «Agenti e risorse».</p>
+                  <p>{t('chat.noAgent')}</p>
                 )}
               </div>
             )}
@@ -308,7 +332,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
                   <AttachmentList attachments={m.attachments} />
                 )}
                 {m.text && <div className="bubble">{m.text}</div>}
-                {m.streaming && !m.text && <div className="bubble typing">Sto pensando…</div>}
+                {m.streaming && !m.text && <div className="bubble typing">{t('chat.thinking')}</div>}
                 {m.error && (
                   <p className="error" role="alert">
                     {m.error}
@@ -346,8 +370,8 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
               <button
                 type="button"
                 className="icon attach"
-                aria-label="Allega immagini o documenti"
-                title="Allega immagini o documenti"
+                aria-label={t('chat.attach')}
+                title={t('chat.attach')}
                 disabled={streaming || attachments.length >= MAX_ATTACHMENTS}
                 onClick={() => fileRef.current?.click()}
               >
@@ -366,8 +390,8 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
                 ref={inputRef}
                 rows={1}
                 autoFocus
-                aria-label="Messaggio"
-                placeholder="Scrivi un messaggio…"
+                aria-label={t('chat.messageLabel')}
+                placeholder={t('chat.placeholder')}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
@@ -379,37 +403,39 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
                   className="secondary"
                   onClick={() => abortRef.current?.abort()}
                 >
-                  Interrompi
+                  {t('chat.stop')}
                 </button>
               ) : (
                 <button
                   type="submit"
                   disabled={!agent || (!input.trim() && attachments.length === 0)}
                 >
-                  Invia
+                  {t('chat.send')}
                 </button>
               )}
             </div>
             <div className="row">
               <select
-                aria-label="Agente"
+                aria-label={t('chat.agentLabel')}
                 value={agentKey}
                 disabled={streaming || agents.length === 0}
                 onChange={(e) => switchAgent(e.target.value)}
               >
                 {agents.map((a) => (
                   <option key={a.key} value={a.key}>
-                    {a.key} · {FILE_ACCESS_LABEL[a.effective.files]}
+                    {a.key} · {t(FILE_ACCESS_KEY[a.effective.files])}
                   </option>
                 ))}
               </select>
               <select
-                aria-label="Modello"
+                aria-label={t('chat.modelLabel')}
                 value={model}
                 disabled={streaming}
                 onChange={(e) => setModel(e.target.value)}
               >
-                <option value="">{agent?.model ? `Modello dell'agente (${agent.model})` : 'Modello predefinito'}</option>
+                <option value="">
+                  {agent?.model ? t('chat.agentModel', { model: agent.model }) : t('chat.defaultModel')}
+                </option>
                 {session.models
                   .filter((m) => m.value !== 'default')
                   .map((m) => (
@@ -418,7 +444,7 @@ export function ChatPanel({ projectId, path, agents, session, onUsage }: Props) 
                     </option>
                   ))}
               </select>
-              <small>Invio per inviare, Maiusc+Invio per andare a capo · trascina o incolla file</small>
+              <small>{t('chat.hint')}</small>
             </div>
           </form>
         </>
@@ -434,6 +460,7 @@ function AttachmentList({
   attachments: Attachment[]
   onRemove?: (index: number) => void
 }) {
+  const { t } = useI18n()
   return (
     <ul className="attachments">
       {attachments.map((a, i) => (
@@ -450,7 +477,7 @@ function AttachmentList({
             <button
               type="button"
               className="remove"
-              aria-label={`Rimuovi ${a.name}`}
+              aria-label={t('chat.removeAttachment', { name: a.name })}
               onClick={() => onRemove(i)}
             >
               ×

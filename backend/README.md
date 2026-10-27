@@ -44,6 +44,25 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Users and admin
+
+There is no admin role: the `User` model only has `email` and `passwordHash`, and no endpoint is restricted by role.
+
+Access is controlled by registration (`POST /api/auth/register`; all routes are served under the `/api` prefix, default port `3000`):
+
+- **First user:** registration is open only while the users table is empty, so the first registered user is effectively the owner of the instance.
+- **Additional users:** set `ALLOW_REGISTRATION="true"` in the backend `.env` and restart the server, then register from the frontend or via the API:
+
+```bash
+curl -X POST http://localhost:3000/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"..."}'
+```
+
+In development you can also delete `dev.db` and re-run the migrations, so the next registration is the first one again.
+
+Adding a real admin would require a `role` field on `User` (with a migration), the role in the JWT payload, a roles guard (e.g. `@Roles('ADMIN')`), and a way to promote a user (seed script or an env variable with the admin email).
+
 ## Run tests
 
 ```bash

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { LoginPage } from './auth/LoginPage'
 import { useAuth } from './auth/useAuth'
-import { LANGUAGES, type Language } from './i18n/messages'
+import { LANGUAGES, type Language, type MessageKey } from './i18n/messages'
 import { useI18n } from './i18n/useI18n'
 import { LibraryPage } from './library/LibraryPage'
 import { ProjectCards } from './projects/ProjectCards'
@@ -11,11 +11,11 @@ import { ClaudeConnection } from './claude/ClaudeConnection'
 import { ClaudeStatusBadge } from './claude/ClaudeStatusBadge'
 import { useClaudeStatus, type ClaudeStatusState } from './claude/useClaudeStatus'
 
-function greeting(date = new Date()) {
+function greeting(t: (key: MessageKey) => string, date = new Date()) {
   const hour = date.getHours()
-  if (hour < 13) return 'Buongiorno'
-  if (hour < 18) return 'Buon pomeriggio'
-  return 'Buonasera'
+  if (hour < 13) return t('greeting.morning')
+  if (hour < 18) return t('greeting.afternoon')
+  return t('greeting.evening')
 }
 
 type Page =
@@ -88,8 +88,9 @@ function App() {
   const { user, loading, logout } = useAuth()
   const page = usePage()
   const claude = useClaudeStatus()
+  const { t } = useI18n()
 
-  if (loading) return <main className="auth">Caricamento…</main>
+  if (loading) return <main className="auth">{t('app.loading')}</main>
   if (!user) return <LoginPage />
 
   return (
@@ -100,7 +101,7 @@ function App() {
           <ClaudeStatusBadge claude={claude} />
           <span className="user">{user.email}</span>
           <button type="button" onClick={logout}>
-            Esci
+            {t('app.logout')}
           </button>
         </header>
         {page.name === 'projects' && <ProjectsPage />}
@@ -116,11 +117,12 @@ function App() {
 
 function Dashboard({ name, claude }: { name: string; claude: ClaudeStatusState }) {
   const { status } = claude
+  const { t } = useI18n()
 
   return (
     <>
       <h1>
-        {greeting()}, {name}!
+        {greeting(t)}, {name}!
       </h1>
       {/* Once connected, status and usage live in the header. */}
       {!status?.connected && <ClaudeConnection {...claude} />}

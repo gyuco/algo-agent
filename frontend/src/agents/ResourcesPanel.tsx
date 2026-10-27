@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
+import { useI18n } from '../i18n/useI18n'
 import { resourcesApi, type AgentResource, type ProjectResources, type ResourceKind } from './api'
-import { FILE_ACCESS_LABEL } from './labels'
+import { FILE_ACCESS_KEY } from './labels'
 
 interface Props {
   projectId: number
@@ -17,6 +18,7 @@ interface Item {
 
 /** Catalog resources of one project, each with its on/off switch. Definitions live in backend/catalog. */
 export function ResourcesPanel({ projectId, resources, onChange }: Props) {
+  const { t } = useI18n()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,7 +30,7 @@ export function ResourcesPanel({ projectId, resources, onChange }: Props) {
       await resourcesApi.set(projectId, kind, item.key, !item.enabled)
       onChange()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Modifica non riuscita')
+      setError(err instanceof Error ? err.message : t('resources.changeFailed'))
     } finally {
       setBusy(null)
     }
@@ -44,7 +46,7 @@ export function ResourcesPanel({ projectId, resources, onChange }: Props) {
       <section className="resource-section">
         <h3>{title}</h3>
         {items.length === 0 ? (
-          <p className="hint">Nessuno nella libreria.</p>
+          <p className="hint">{t('resources.none')}</p>
         ) : (
           <ul className="resource-list">
             {items.map((item) => (
@@ -71,45 +73,45 @@ export function ResourcesPanel({ projectId, resources, onChange }: Props) {
   return (
     <div className="card resources">
       <p className="hint">
-        Le risorse si creano e modificano in <a href="#/resources">Risorse</a>. Qui scegli cosa è
-        attivo in questo progetto: un agente riceve solo i suoi permessi, limitati a ciò che è
-        attivo.
+        {t('resources.introLead')} <a href="#/resources">{t('resources.tabLink')}</a>.{' '}
+        {t('resources.introTail')}
       </p>
       {error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
-      {section('Agenti', 'agent', resources.agents, (item) => (
+      {section(t('kind.agents'), 'agent', resources.agents, (item) => (
         <AgentPermissions agent={item as AgentResource} />
       ))}
-      {section('Workflow', 'workflow', resources.workflows)}
-      {section('Tool', 'tool', resources.tools)}
-      {section('Server MCP', 'mcp', resources.mcp)}
-      {section('Skill', 'skill', resources.skills)}
+      {section(t('kind.workflows'), 'workflow', resources.workflows)}
+      {section(t('kind.tools'), 'tool', resources.tools)}
+      {section(t('kind.mcps'), 'mcp', resources.mcp)}
+      {section(t('kind.skills'), 'skill', resources.skills)}
     </div>
   )
 }
 
 function AgentPermissions({ agent }: { agent: AgentResource }) {
+  const { t } = useI18n()
   const { permissions: asked, effective } = agent
   const lists = [
-    ['tool', asked.tools, effective.tools],
-    ['MCP', asked.mcp, effective.mcp],
-    ['skill', asked.skills, effective.skills],
+    ['detail.tool', asked.tools, effective.tools],
+    ['detail.mcp', asked.mcp, effective.mcp],
+    ['detail.skill', asked.skills, effective.skills],
   ] as const
   return (
     <ul className="tools permissions">
-      <li>file: {FILE_ACCESS_LABEL[effective.files]}</li>
-      {agent.model && <li>modello: {agent.model}</li>}
-      {lists.flatMap(([label, all, granted]) =>
+      <li>{t('detail.files', { access: t(FILE_ACCESS_KEY[effective.files]) })}</li>
+      {agent.model && <li>{t('detail.model', { model: agent.model })}</li>}
+      {lists.flatMap(([labelKey, all, granted]) =>
         all.map((key) => (
           <li
-            key={`${label}:${key}`}
+            key={`${labelKey}:${key}`}
             className={granted.includes(key) ? '' : 'off'}
-            title={granted.includes(key) ? undefined : 'Non attivo in questo progetto'}
+            title={granted.includes(key) ? undefined : t('resources.notActive')}
           >
-            {label}: {key}
+            {t(labelKey, { key })}
           </li>
         )),
       )}

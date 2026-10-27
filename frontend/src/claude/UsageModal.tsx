@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react'
+import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 import { claudeApi } from './api'
 import { UsagePanel } from './UsagePanel'
 import type { ClaudeStatusState } from './useClaudeStatus'
 
-const METHOD_LABEL = {
-  api_key: 'API key',
-  oauth_token: 'abbonamento Claude',
-} as const
+const METHOD_KEY: Record<'api_key' | 'oauth_token', MessageKey> = {
+  api_key: 'usage.methodApiKey',
+  oauth_token: 'usage.methodSubscription',
+}
 
 interface Props {
   claude: ClaudeStatusState
@@ -50,10 +51,10 @@ export function UsageModal({ claude, onClose }: Props) {
       {status?.connected && status.method && (
         <div className="usage-foot connection">
           <span>
-            Tramite {METHOD_LABEL[status.method]} <code>{status.secretHint}</code>
+            {t('usage.via')} {t(METHOD_KEY[status.method])} <code>{status.secretHint}</code>
           </span>
           <button type="button" className="secondary" disabled={busy} onClick={disconnect}>
-            Disconnetti
+            {t('usage.disconnect')}
           </button>
         </div>
       )}

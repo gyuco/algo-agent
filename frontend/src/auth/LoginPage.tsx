@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../api/client'
+import { useI18n } from '../i18n/useI18n'
 import { useAuth } from './useAuth'
 
 export function LoginPage() {
   const { login, register } = useAuth()
+  const { t } = useI18n()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [registrationOpen, setRegistrationOpen] = useState(false)
   const [email, setEmail] = useState('')
@@ -27,7 +29,7 @@ export function LoginPage() {
     try {
       await (mode === 'login' ? login : register)(email, password)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Errore imprevisto')
+      setError(err instanceof Error ? err.message : t('error.unexpected'))
     } finally {
       setSubmitting(false)
     }
@@ -38,9 +40,9 @@ export function LoginPage() {
   return (
     <main className="auth">
       <form className="card" onSubmit={onSubmit}>
-        <h1>{isLogin ? 'Accedi' : 'Crea account'}</h1>
+        <h1>{isLogin ? t('auth.signIn') : t('auth.createAccount')}</h1>
         <label>
-          Email
+          {t('auth.email')}
           <input
             type="email"
             autoComplete="email"
@@ -50,7 +52,7 @@ export function LoginPage() {
           />
         </label>
         <label>
-          Password
+          {t('auth.password')}
           <input
             type="password"
             autoComplete={isLogin ? 'current-password' : 'new-password'}
@@ -67,7 +69,7 @@ export function LoginPage() {
           </p>
         )}
         <button type="submit" disabled={submitting}>
-          {submitting ? 'Attendere…' : isLogin ? 'Accedi' : 'Registrati'}
+          {submitting ? t('auth.wait') : isLogin ? t('auth.signIn') : t('auth.signUp')}
         </button>
         {registrationOpen && (
           <button
@@ -75,7 +77,7 @@ export function LoginPage() {
             className="link"
             onClick={() => setMode(isLogin ? 'register' : 'login')}
           >
-            {isLogin ? 'Non hai un account? Registrati' : 'Hai già un account? Accedi'}
+            {isLogin ? t('auth.noAccount') : t('auth.hasAccount')}
           </button>
         )}
       </form>

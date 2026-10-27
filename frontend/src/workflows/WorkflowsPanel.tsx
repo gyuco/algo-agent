@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { WorkflowResource } from '../agents/api'
 import type { RateLimitSnapshot } from '../claude/api'
+import { LOCALES, type MessageKey } from '../i18n/messages'
+import { useI18n } from '../i18n/useI18n'
 import { workflowsApi, type RunStatus, type WorkflowRun } from './api'
 
 interface LiveStep {
@@ -10,11 +12,11 @@ interface LiveStep {
   error?: string
 }
 
-const STATUS_LABEL: Record<RunStatus, string> = {
-  running: 'in corso',
-  done: 'completato',
-  failed: 'fallito',
-  aborted: 'interrotto',
+const STATUS_KEY: Record<RunStatus, MessageKey> = {
+  running: 'status.running',
+  done: 'status.done',
+  failed: 'status.failed',
+  aborted: 'status.aborted',
 }
 
 interface Props {
@@ -26,6 +28,7 @@ interface Props {
 
 /** Starts a workflow, follows its steps live and lists the project's past runs. */
 export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
+  const { t, language } = useI18n()
   const [key, setKey] = useState(workflows[0]?.key ?? '')
   const [input, setInput] = useState('')
   const [steps, setSteps] = useState<LiveStep[]>([])
@@ -81,7 +84,7 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
       }
     } catch (err) {
       if (abort.signal.aborted) finished = 'aborted'
-      else setError(err instanceof Error ? err.message : 'Avvio non riuscito')
+      else setError(err instanceof Error ? err.message : t('workflows.startFailed'))
     } finally {
       setStatus(abort.signal.aborted ? 'aborted' : finished)
       loadRuns()
@@ -91,7 +94,7 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
   if (workflows.length === 0) {
     return (
       <div className="card workflows">
-        <p className="hint">Nessun workflow attivo in questo progetto. Attivane uno in «Agenti e risorse».</p>
+        <p className="hint">{t('workflows.empty')}</p>
       </div>
     )
   }
@@ -100,7 +103,7 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
     <div className="card workflows">
       <form className="stack" onSubmit={run}>
         <label>
-          Workflow
+          {t('workflows.label')}
           <select value={key} disabled={running} onChange={(e) => setKey(e.target.value)}>
             {workflows.map((w) => (
               <option key={w.key} value={w.key}>
@@ -111,11 +114,11 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
         </label>
         {workflow && (
           <p className="hint">
-            {workflow.description} Passi: {workflow.agents.join(' → ')}
+            {workflow.description} {t('workflows.steps')} {workflow.agents.join(' → ')}
           </p>
         )}
         <label>
-          {workflow?.input ?? 'Input'}
+          {workflow?.input ?? t('workflows.input')}
           <textarea
             rows={3}
             value={input}
@@ -126,11 +129,11 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
         <div className="row end">
           {running ? (
             <button type="button" className="secondary" onClick={() => abortRef.current?.abort()}>
-              Interrompi
+              {t('chat.stop')}
             </button>
           ) : (
             <button type="submit" disabled={!input.trim()}>
-              Avvia
+              {t('workflows.start')}
             </button>
           )}
         </div>
@@ -144,7 +147,10 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
 
       {steps.length > 0 && (
         <section className="run-live" aria-live="polite">
-          <h3>Esecuzione {status && `· ${STATUS_LABEL[status]}`}</h3>
+          <h3>
+            {t('workflows.liveTitle')}
+            {status && ` · ${t(STATUS_KEY[status])}`}
+          </h3>
           <ol className="run-steps">
             {steps.map((s, i) => (
               <li key={i}>
@@ -170,11 +176,11 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
 
       {runs.length > 0 && (
         <section className="run-history">
-          <h3>Esecuzioni recenti</h3>
+          <h3>{t('workflows.recent')}</h3>
           {runs.map((r) => (
             <details key={r.id}>
               <summary>
-                {r.workflow} · {STATUS_LABEL[r.status]} · {new Date(r.createdAt).toLocaleString()}
+                {r.workflow} · {t(STATUS_KEY[r.status])} · {new Date(r.createdAt).toLocaleString(LOCALES[language])}
               </summary>
               <p className="hint">{r.input}</p>
               <ol className="run-steps">
@@ -182,7 +188,7 @@ export function WorkflowsPanel({ projectId, workflows, onUsage }: Props) {
                   <li key={i}>
                     <strong>
                       {s.agent}
-                      {s.isError && ' (errore)'}
+                      {s.isError && t('workflows.errorSuffix')}
                     </strong>
                     {s.output && <div className="bubble">{s.output}</div>}
                   </li>

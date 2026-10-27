@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { claudeApi } from './api'
 import { SubscriptionConnect } from './SubscriptionConnect'
 import type { ClaudeStatusState } from './useClaudeStatus'
+import { useI18n } from '../i18n/useI18n'
 
 export function ClaudeConnection({
   status,
@@ -11,6 +12,7 @@ export function ClaudeConnection({
   run,
   reload,
 }: ClaudeStatusState) {
+  const { t } = useI18n()
   const [apiKey, setApiKey] = useState('')
 
   const connectApiKey = (e: FormEvent) => {
@@ -31,7 +33,7 @@ export function ClaudeConnection({
   if (checking) {
     return (
       <section className="card" aria-busy="true">
-        <p>Verifico la connessione a Claude Code…</p>
+        <p>{t('connect.checking')}</p>
       </section>
     )
   }
@@ -41,9 +43,9 @@ export function ClaudeConnection({
   return (
     <section className="card">
       <h2>
-        <span className="dot off" aria-hidden="true" /> Claude Code non connesso
+        <span className="dot off" aria-hidden="true" /> {t('claude.disconnected')}
       </h2>
-      <p>Collega il tuo account Anthropic per usare l'agente.</p>
+      <p>{t('connect.intro')}</p>
       {problem && (
         <p className="error" role="alert">
           {problem}
@@ -54,12 +56,12 @@ export function ClaudeConnection({
 
       <details className="option" open={!status?.subscriptionAvailable}>
         <summary>
-          <strong>API key Anthropic</strong>
-          {status?.subscriptionAvailable && ' (opzionale)'}
+          <strong>{t('connect.apiKeyTitle')}</strong>
+          {status?.subscriptionAvailable && ` ${t('connect.optional')}`}
         </summary>
         <form onSubmit={connectApiKey} className="stack">
           <label>
-            API key
+            {t('connect.apiKeyLabel')}
             <input
               type="password"
               autoComplete="off"
@@ -70,14 +72,14 @@ export function ClaudeConnection({
             />
           </label>
           <button type="submit" disabled={busy}>
-            {busy ? 'Verifico…' : 'Connetti'}
+            {busy ? t('connect.verifying') : t('connect.connect')}
           </button>
         </form>
       </details>
 
       {status?.method && (
         <button type="button" className="link" disabled={busy} onClick={disconnect}>
-          Rimuovi la credenziale salvata
+          {t('connect.removeCredential')}
         </button>
       )}
     </section>

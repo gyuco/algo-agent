@@ -110,8 +110,6 @@ button.link {
 }
 
 .home {
-  max-width: 960px;
-  margin: 0 auto;
   padding: 1rem;
 }
 
@@ -122,10 +120,6 @@ button.link {
   align-items: center;
   gap: 1rem;
   margin-bottom: 2rem;
-}
-
-.home .card {
-  max-width: 520px;
 }
 
 h2 {
@@ -1067,7 +1061,7 @@ label.switch input {
   margin: 0;
 }
 
-.home .card.editor {
+.card.editor {
   max-width: 60rem;
 }
 
