@@ -7,9 +7,6 @@ import { ProjectsService } from '../projects/projects.service.js';
 import { ChatMessageDto } from './dto/chat.dto.js';
 import { describeWorkspace, resolveWorkspace } from './workspace.js';
 
-/** Agent that answers when the chat doesn't pick one. */
-export const DEFAULT_AGENT = 'assistant';
-
 @Injectable()
 export class ChatService {
   constructor(
@@ -28,7 +25,7 @@ export class ChatService {
     );
   }
 
-  /** Runs one user turn with the chosen agent and yields its chat events. */
+  /** Runs one user turn, with the chosen agent or straight with the model, and yields its chat events. */
   async *send(
     userId: number,
     dto: ChatMessageDto,
@@ -38,7 +35,7 @@ export class ChatService {
     yield* this.runner.run({
       userId,
       project,
-      agent: dto.agent ?? DEFAULT_AGENT,
+      agent: dto.agent,
       prompt: { text: dto.message, attachments: dto.attachments ?? [] },
       sessionId: dto.sessionId,
       model: dto.model,

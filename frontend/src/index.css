@@ -1065,3 +1065,144 @@ fieldset.checklist legend {
   font-size: 0.875rem;
   font-weight: 600;
 }
+
+/* Delegations: the main chat handing tasks to the project's agents. */
+.messages[hidden] {
+  display: none;
+}
+
+.agent-trail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+}
+
+button.trail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+}
+
+button.trail-item.active {
+  border-color: var(--accent);
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.trail-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.trail-item.running .trail-dot {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.trail-item.done .trail-dot {
+  background: #2ec27e;
+}
+
+.trail-item.failed .trail-dot {
+  background: var(--error);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+button.delegation-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: min(28rem, 100%);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+  font-size: 0.8125rem;
+}
+
+button.delegation-card:hover {
+  border-color: var(--accent);
+}
+
+button.delegation-card.done {
+  border-left-color: #2ec27e;
+}
+
+button.delegation-card.failed {
+  border-left-color: var(--error);
+}
+
+.delegation-head,
+.delegation-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.delegation-agent {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.delegation-task {
+  color: var(--text-h);
+}
+
+.delegation-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+.delegation-status {
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.delegation-status.done {
+  color: #2ec27e;
+}
+
+.delegation-status.failed {
+  color: var(--error);
+}
+
+.delegation-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.delegation-view-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.delegated-task small {
+  align-self: flex-end;
+}

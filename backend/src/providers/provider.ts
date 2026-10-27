@@ -5,8 +5,18 @@ import type { AgentSpec, Catalog } from '../catalog/catalog.js';
 export type ChatEvent =
   /** `sessionId` is opaque to clients: send it back to continue the conversation. */
   | { type: 'session'; provider: string; sessionId: string; model: string }
-  | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; target: string | null }
+  /** `delegation` is the id of the delegation that produced it; absent for the main thread. */
+  | { type: 'text'; text: string; delegation?: string }
+  | { type: 'tool'; name: string; target: string | null; delegation?: string }
+  /** The main thread handed a task to one of the project's agents. */
+  | {
+      type: 'delegation';
+      id: string;
+      agent: string;
+      description: string;
+      prompt: string;
+    }
+  | { type: 'delegation_done'; id: string; isError: boolean }
   /** New provider-specific connection details (e.g. Claude's plan usage). */
   | { type: 'usage'; provider: string; details: Record<string, unknown> }
   | {
@@ -31,6 +41,15 @@ export interface UserTurn {
   attachments: UserAttachment[];
 }
 
+/** An agent the main thread may delegate to, already authorized like the main one. */
+export interface Subagent {
+  agent: AgentSpec;
+  policy: AgentPolicy;
+  systemPrompt: string;
+  /** Model id within the provider; the main thread's model when omitted. */
+  model?: string;
+}
+
 /** One agent turn, already authorized: the provider only has to run it. */
 export interface RunContext {
   userId: number;
@@ -46,6 +65,8 @@ export interface RunContext {
   model?: string;
   /** The provider's own id of the session to continue. */
   sessionId?: string;
+  /** Agents the main thread may delegate to; empty unless the provider supports it. */
+  subagents: Subagent[];
   signal: AbortSignal;
 }
 
@@ -84,7 +105,13 @@ export interface AgentProvider {
   readonly id: string;
   readonly label: string;
   /** What the provider can grant besides file access; the rest of a policy is dropped. */
-  readonly supports: { tools: boolean; mcp: boolean; skills: boolean };
+  readonly supports: {
+    tools: boolean;
+    mcp: boolean;
+    skills: boolean;
+    /** Whether the main thread can delegate to subagents. */
+    agents: boolean;
+  };
   status(userId: number): Promise<ProviderStatus>;
   disconnect(userId: number): Promise<void>;
   run(ctx: RunContext): AsyncGenerator<ChatEvent>;

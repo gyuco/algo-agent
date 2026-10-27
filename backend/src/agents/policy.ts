@@ -8,8 +8,8 @@ export const APP_SERVER = 'app';
 /** Name of the plugin in catalog/plugin that ships the catalog skills. */
 export const SKILLS_PLUGIN = 'catalog';
 
-const READ_TOOLS = ['Read', 'Glob', 'Grep'];
-const WRITE_TOOLS = ['Write', 'Edit'];
+export const READ_TOOLS = ['Read', 'Glob', 'Grep'];
+export const WRITE_TOOLS = ['Write', 'Edit'];
 
 /**
  * What one agent may do in one project: the agent's own permissions narrowed

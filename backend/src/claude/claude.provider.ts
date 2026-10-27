@@ -26,6 +26,7 @@ import {
   sdkPrompt,
   skillsPlugin,
   toEvents,
+  turnState,
 } from './claude-runtime.js';
 import { type RateLimitSnapshot, toRateLimitSnapshot } from './rate-limit.js';
 import { SetupTokenSession } from './setup-token.session.js';
@@ -73,7 +74,7 @@ interface PendingSetup {
 export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
   readonly id = CLAUDE;
   readonly label = 'Claude Code';
-  readonly supports = { tools: true, mcp: true, skills: true };
+  readonly supports = { tools: true, mcp: true, skills: true, agents: true };
 
   private readonly logger = new Logger(ClaudeProvider.name);
   private readonly pendingSetups = new Map<string, PendingSetup>();
@@ -259,22 +260,29 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
         env,
         model: ctx.model,
         resume: ctx.sessionId,
-        ...capabilities(ctx.catalog, ctx.policy, ctx.cwd, pluginDir),
-        ...confine(ctx.cwd, ctx.policy, this.logger),
+        ...capabilities(
+          ctx.catalog,
+          ctx.policy,
+          ctx.cwd,
+          pluginDir,
+          ctx.subagents,
+        ),
+        ...confine(ctx.cwd, ctx.policy, this.logger, ctx.subagents),
         permissionMode: 'default',
         // Don't load the workspace's own settings: they could add hooks or permissions.
         settingSources: [],
         systemPrompt: ctx.systemPrompt,
         includePartialMessages: true,
+        // So a delegated agent's work can be followed in the chat.
+        forwardSubagentText: ctx.subagents.length > 0,
         maxTurns: ctx.agent.maxTurns ?? 20,
       },
     });
 
-    let wroteText = false;
+    const state = turnState();
     try {
       for await (const message of session) {
-        for (const event of toEvents(message, () => wroteText)) {
-          if (event.type === 'text') wroteText = true;
+        for (const event of toEvents(message, state)) {
           if (event.type === 'usage') {
             await this.connections.updateState(
               ctx.userId,
@@ -316,6 +324,8 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
       PATH: process.env.PATH ?? '',
       HOME: process.env.HOME ?? '',
       CLAUDE_CONFIG_DIR: configDir,
+      // A turn ends with its stream: delegated agents must finish inside it.
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
       ...(credential && { [ENV_VAR[credential.method]]: credential.secret }),
     };
   }

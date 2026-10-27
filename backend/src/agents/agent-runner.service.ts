@@ -14,6 +14,7 @@ import { formatRef, parseRef } from '../providers/model-ref.js';
 import type {
   AgentProvider,
   ChatEvent,
+  Subagent,
   UserTurn,
 } from '../providers/provider.js';
 import { ProvidersService } from '../providers/providers.service.js';
@@ -23,7 +24,8 @@ import { ProjectResourcesService } from './project-resources.service.js';
 export interface RunRequest {
   userId: number;
   project: { id: number; path: string };
-  agent: string;
+  /** Catalog agent that answers; without one the user chats with the model directly. */
+  agent?: string;
   prompt: UserTurn;
   /** Session to continue, as a `session` event returned it. */
   sessionId?: string;
@@ -50,6 +52,34 @@ function systemPrompt(agent: AgentSpec, policy: AgentPolicy) {
   ].join('\n');
 }
 
+/** Key of the main thread when the user picks no agent; not a valid catalog key. */
+export const DIRECT_CHAT = '_chat';
+
+/** The main thread of a direct chat: everything the project has switched on, and the agents it may delegate to. */
+function directAgent(policy: AgentPolicy, subagents: Subagent[]): AgentSpec {
+  const delegation = subagents.length
+    ? [
+        '',
+        'You can delegate a self-contained task to one of these agents with the Agent tool, naming it as subagent_type.',
+        'Delegate when the task matches what an agent is for; otherwise do the work yourself.',
+        'Each agent has its own permissions and sees only the prompt you give it, so make that prompt complete.',
+        ...subagents.map((s) => `- ${s.agent.key}: ${s.agent.description}`),
+      ]
+    : [];
+  return {
+    key: DIRECT_CHAT,
+    description: 'Chat diretta con il modello',
+    enabledByDefault: true,
+    maxTurns: 50,
+    permissions: { ...policy },
+    prompt: [
+      "You are a general-purpose coding assistant, like Claude Code, working on the files of the user's project.",
+      'Make focused changes: touch only what the request needs, and say which files you changed.',
+      ...delegation,
+    ].join('\n'),
+  };
+}
+
 /** The policy without what the provider can't grant. */
 function narrow(policy: AgentPolicy, provider: AgentProvider): AgentPolicy {
   const { supports } = provider;
@@ -59,6 +89,12 @@ function narrow(policy: AgentPolicy, provider: AgentProvider): AgentPolicy {
     mcp: supports.mcp ? policy.mcp : [],
     skills: supports.skills ? policy.skills : [],
   };
+}
+
+/** A subagent's model id: its own when it belongs to `provider`; otherwise it runs on the main model. */
+function subagentModel(agent: AgentSpec, provider: string, ids: string[]) {
+  const own = agent.model ? parseRef(agent.model, ids) : null;
+  return own?.provider === provider ? own.id : undefined;
 }
 
 /** Runs one agent turn in a project, with the provider the model belongs to and exactly the permissions its policy grants. */
@@ -101,15 +137,56 @@ export class AgentRunnerService {
   }
 
   /**
+   * A direct chat: the main thread may use everything the project has switched
+   * on, and delegate to its agents, each with its own policy. Stdio MCP servers
+   * are left out outside personal mode instead of refusing the turn, since the
+   * user didn't ask for them.
+   */
+  private async directChat(
+    userId: number,
+    projectId: number,
+    provider: AgentProvider,
+  ) {
+    const catalog = await this.catalogService.forUser(userId);
+    const enabled = await this.resources.isEnabled(projectId, catalog);
+    const stdioAllowed = await this.connections.isPersonalOwner(userId);
+    const usable = (k: string) =>
+      stdioAllowed || catalog.mcp.get(k)?.type !== 'stdio';
+    const grant = (policy: AgentPolicy) =>
+      narrow({ ...policy, mcp: policy.mcp.filter(usable) }, provider);
+
+    const subagents: Subagent[] = provider.supports.agents
+      ? [...catalog.agents.values()]
+          .filter((a) => enabled('agent', a.key))
+          .map((agent) => {
+            const policy = grant(this.resources.policyFor(agent, enabled));
+            return { agent, policy, systemPrompt: systemPrompt(agent, policy) };
+          })
+      : [];
+    const policy = grant({
+      files: 'write',
+      tools: [...catalog.tools.keys()].filter((k) => enabled('tool', k)),
+      mcp: [...catalog.mcp.keys()].filter((k) => enabled('mcp', k)),
+      skills: [...catalog.skills.keys()].filter((k) => enabled('skill', k)),
+    });
+    return {
+      catalog,
+      agent: directAgent(policy, subagents),
+      policy,
+      subagents,
+    };
+  }
+
+  /**
    * Which provider runs the turn, and with which model and session. A session
    * stays with its provider; otherwise the chosen model decides, then the
    * agent's, then the first provider connected.
    */
-  private async target(req: RunRequest, agent: AgentSpec) {
+  private async target(req: RunRequest, agent?: AgentSpec) {
     const ids = this.providers.ids();
     const session = req.sessionId ? parseRef(req.sessionId, ids) : null;
     const chosen = req.model ? parseRef(req.model, ids) : null;
-    const own = agent.model ? parseRef(agent.model, ids) : null;
+    const own = agent?.model ? parseRef(agent.model, ids) : null;
     if (session && chosen && chosen.provider !== session.provider) {
       throw new BadRequestException(
         'Il modello scelto è di un altro provider: inizia una nuova conversazione',
@@ -127,14 +204,18 @@ export class AgentRunnerService {
 
   /** Yields chat events as the provider streams them. */
   async *run(req: RunRequest): AsyncGenerator<ChatEvent> {
-    const { catalog, agent, policy } = await this.agentFor(
-      req.userId,
-      req.project.id,
-      req.agent,
-    );
+    const chosen = req.agent
+      ? await this.agentFor(req.userId, req.project.id, req.agent)
+      : null;
     const cwd = await resolveWorkspace(req.project.path, this.workspaceRoot());
-    const { provider, model, sessionId } = await this.target(req, agent);
-    const granted = narrow(policy, provider);
+    const { provider, model, sessionId } = await this.target(
+      req,
+      chosen?.agent,
+    );
+    const { catalog, agent, policy, subagents } = chosen
+      ? { ...chosen, policy: narrow(chosen.policy, provider), subagents: [] }
+      : await this.directChat(req.userId, req.project.id, provider);
+    const ids = this.providers.ids();
 
     let started = false;
     try {
@@ -142,12 +223,16 @@ export class AgentRunnerService {
         userId: req.userId,
         cwd,
         agent,
-        policy: granted,
+        policy,
         catalog,
-        systemPrompt: systemPrompt(agent, granted),
+        systemPrompt: systemPrompt(agent, policy),
         prompt: req.prompt,
         model,
         sessionId,
+        subagents: subagents.map((s) => ({
+          ...s,
+          model: subagentModel(s.agent, provider.id, ids),
+        })),
         signal: req.signal,
       })) {
         started = true;

@@ -60,7 +60,7 @@ export class ChatMessageDto {
   @IsInt()
   projectId: number;
 
-  /** Catalog agent that answers; the default assistant when omitted. */
+  /** Catalog agent that answers; omitted, the model answers and may delegate to the project's agents. */
   @IsOptional()
   @Matches(/^[a-z0-9][a-z0-9-]{0,63}$/)
   agent?: string;

@@ -105,7 +105,8 @@ const PASSED_ENV = [
 export class OpencodeProvider implements AgentProvider {
   readonly id = OPENCODE;
   readonly label = 'OpenCode';
-  readonly supports = { tools: true, mcp: true, skills: true };
+  // Its subagents run in child sessions this provider doesn't follow yet.
+  readonly supports = { tools: true, mcp: true, skills: true, agents: false };
 
   private readonly logger = new Logger(OpencodeProvider.name);
 
