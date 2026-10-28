@@ -337,6 +337,9 @@ const en = {
   'workflows.rejectedNote': 'Rejected: {note}',
   'sessions.new': 'New conversation',
   'sessions.unread': 'new answer',
+  'user.menu': 'Account menu',
+  'user.profile': 'Profile',
+  'profile.memberSince': 'Member since',
 }
 
 export type MessageKey = keyof typeof en
@@ -674,6 +677,9 @@ const it: Record<MessageKey, string> = {
   'workflows.rejectedNote': 'Rifiutato: {note}',
   'sessions.new': 'Nuova conversazione',
   'sessions.unread': 'nuova risposta',
+  'user.menu': 'Menu account',
+  'user.profile': 'Profilo',
+  'profile.memberSince': 'Membro dal',
 }
 
 const es: Record<MessageKey, string> = {
@@ -1009,6 +1015,9 @@ const es: Record<MessageKey, string> = {
   'workflows.rejectedNote': 'Rechazado: {note}',
   'sessions.new': 'Nueva conversación',
   'sessions.unread': 'respuesta nueva',
+  'user.menu': 'Menú de la cuenta',
+  'user.profile': 'Perfil',
+  'profile.memberSince': 'Miembro desde',
 }
 
 export const MESSAGES: Record<Language, Record<MessageKey, string>> = { en, it, es }

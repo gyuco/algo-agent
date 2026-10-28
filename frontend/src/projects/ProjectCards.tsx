@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/useI18n'
 import { projectsApi, type Project } from './api'
 
+/** Last two folders of a path, with an ellipsis when something is hidden. */
+function shortPath(path: string) {
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length <= 2) return path
+  return `…/${parts.slice(-2).join('/')}`
+}
+
 /** Dashboard grid: one card per project, each opening its workspace. */
 export function ProjectCards() {
   const { t } = useI18n()
@@ -33,9 +40,28 @@ export function ProjectCards() {
         <ul className="cards">
           {projects.map((p) => (
             <li key={p.id}>
-              <a className="card project-card" href={`#/workspace/${p.id}`}>
-                <strong>{p.name}</strong>
-                <code>{p.path}</code>
+              <a className="card project-card" href={`#/workspace/${p.id}`} title={p.path}>
+                <span className="project-icon" aria-hidden="true">
+                  {p.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="project-body">
+                  <strong>{p.name}</strong>
+                  <code title={p.path}>{shortPath(p.path)}</code>
+                </span>
+                <span className="project-open" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14M13 6l6 6-6 6" />
+                  </svg>
+                </span>
               </a>
             </li>
           ))}
