@@ -5,6 +5,8 @@ import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Lets running runs finish, or be marked interrupted, before the process exits.
+  app.enableShutdownHooks();
   // Chat attachments travel as base64 in the JSON body (up to 5 files of 5 MB).
   app.useBodyParser('json', { limit: '40mb' });
   app.setGlobalPrefix('api');

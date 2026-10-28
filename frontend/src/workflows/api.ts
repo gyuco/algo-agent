@@ -1,35 +1,15 @@
-import { api, apiStream } from '../api/client'
-import type { ChatEvent } from '../chat/api'
+import { api } from '../api/client'
+import type { Run } from '../runs/api'
 
-export type RunStatus = 'running' | 'done' | 'failed' | 'aborted'
-
-export interface StepResult {
-  agent: string
-  output: string
-  isError: boolean
-}
-
-export interface WorkflowRun {
-  id: number
-  workflow: string
-  input: string
-  status: RunStatus
-  steps: StepResult[]
-  createdAt: string
-}
-
-export type WorkflowEvent =
-  | { type: 'run'; runId: number }
-  | { type: 'step'; index: number; agent: string }
-  | ChatEvent
-  | { type: 'finished'; status: RunStatus }
+/** A workflow run as the project's list returns it. */
+export type WorkflowRun = Run
 
 export const workflowsApi = {
   runs: (projectId: number) => api<WorkflowRun[]>(`/projects/${projectId}/workflows/runs`),
-  run: (projectId: number, key: string, input: string, signal: AbortSignal) =>
-    apiStream<WorkflowEvent>(
-      `/projects/${projectId}/workflows/${encodeURIComponent(key)}/runs`,
-      { input },
-      signal,
-    ),
+  /** Queues a run; follow it with runsApi.follow. */
+  run: (projectId: number, key: string, input: string) =>
+    api<{ runId: number }>(`/projects/${projectId}/workflows/${encodeURIComponent(key)}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ input }),
+    }),
 }

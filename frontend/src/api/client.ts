@@ -38,18 +38,15 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json().catch(() => null)) as T
 }
 
-/** POSTs `body` and yields each Server-Sent Event's JSON payload as it arrives. */
-export async function* apiStream<T>(
-  path: string,
-  body: unknown,
-  signal: AbortSignal,
-): AsyncGenerator<T> {
-  const res = await fetch(`/api${path}`, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify(body),
-    signal,
-  })
+/** One Server-Sent Event: its `id`, when the server sent one, and its JSON payload. */
+export interface StreamEvent<T> {
+  id: number | null
+  data: T
+}
+
+/** GETs `path` and yields each Server-Sent Event as it arrives, until the server ends the stream. */
+export async function* apiEvents<T>(path: string, signal: AbortSignal): AsyncGenerator<StreamEvent<T>> {
+  const res = await fetch(`/api${path}`, { headers: headers(), signal })
   if (!res.ok) throw await toApiError(res)
   if (!res.body) return
 
@@ -61,14 +58,15 @@ export async function* apiStream<T>(
     buffer += value
     let end: number
     while ((end = buffer.indexOf('\n\n')) >= 0) {
-      const frame = buffer.slice(0, end)
+      const lines = buffer.slice(0, end).split('\n')
       buffer = buffer.slice(end + 2)
-      const data = frame
-        .split('\n')
+      const data = lines
         .filter((line) => line.startsWith('data: '))
         .map((line) => line.slice(6))
         .join('\n')
-      if (data) yield JSON.parse(data) as T
+      const id = lines.find((line) => line.startsWith('id: '))
+      // Lines starting with ':' are keep-alive comments.
+      if (data) yield { id: id ? Number(id.slice(4)) : null, data: JSON.parse(data) as T }
     }
   }
 }

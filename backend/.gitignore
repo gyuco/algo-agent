@@ -4,7 +4,12 @@ dist
 .env
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 
 /src/generated/prisma
 .claude-runtime
 .opencode-runtime
+
+# Files of runs in progress, e.g. chat attachments
+/data

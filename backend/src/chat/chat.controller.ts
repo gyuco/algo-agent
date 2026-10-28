@@ -8,11 +8,8 @@ import {
   Post,
   Query,
   Req,
-  Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
-import { closeSignal, sendEvents } from '../common/sse.js';
 import { ChatService } from './chat.service.js';
 import {
   ChatMessageDto,
@@ -31,14 +28,11 @@ export class ChatController {
     return this.chat.workspace(dto.path);
   }
 
-  /** Streams one chat turn as Server-Sent Events. */
+  /** Queues one chat turn; follow it with GET /runs/:id/events. */
   @Post('messages')
-  async send(
-    @Req() req: AuthenticatedRequest,
-    @Res() res: Response,
-    @Body() dto: ChatMessageDto,
-  ) {
-    await sendEvents(res, this.chat.send(req.user.sub, dto, closeSignal(res)));
+  @HttpCode(HttpStatus.ACCEPTED)
+  send(@Req() req: AuthenticatedRequest, @Body() dto: ChatMessageDto) {
+    return this.chat.send(req.user.sub, dto);
   }
 
   /** The project's past conversations, newest first. */

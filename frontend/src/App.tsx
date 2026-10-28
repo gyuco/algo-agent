@@ -10,6 +10,9 @@ import { ProjectWorkspace } from './projects/ProjectWorkspace'
 import { ConnectionsBadge } from './connections/ConnectionsBadge'
 import { ConnectionsPage } from './connections/ConnectionsPage'
 import { useConnections, type ConnectionsState } from './connections/useConnections'
+import { ActivityBadge } from './runs/ActivityBadge'
+import { ActivityPage } from './runs/ActivityPage'
+import { useActiveRuns } from './runs/useActiveRuns'
 
 function greeting(t: (key: MessageKey) => string, date = new Date()) {
   const hour = date.getHours()
@@ -23,15 +26,24 @@ type Page =
   | { name: 'projects' }
   | { name: 'resources' }
   | { name: 'connections' }
-  | { name: 'workspace'; projectId: number }
+  | { name: 'activity' }
+  /** `runId` opens that run in the project: its conversation or its workflow. */
+  | { name: 'workspace'; projectId: number; runId?: number }
 
 function pageFromHash(): Page {
   const hash = window.location.hash
   if (hash === '#/projects') return { name: 'projects' }
   if (hash === '#/resources') return { name: 'resources' }
   if (hash === '#/connections') return { name: 'connections' }
-  const workspace = /^#\/workspace\/(\d+)$/.exec(hash)
-  if (workspace) return { name: 'workspace', projectId: Number(workspace[1]) }
+  if (hash === '#/activity') return { name: 'activity' }
+  const workspace = /^#\/workspace\/(\d+)(?:\/run\/(\d+))?$/.exec(hash)
+  if (workspace) {
+    return {
+      name: 'workspace',
+      projectId: Number(workspace[1]),
+      runId: workspace[2] ? Number(workspace[2]) : undefined,
+    }
+  }
   return { name: 'home' }
 }
 
@@ -71,6 +83,11 @@ function Sidebar({ page }: { page: Page }) {
             </a>
           </li>
           <li>
+            <a href="#/activity" aria-current={page.name === 'activity' ? 'page' : undefined}>
+              {t('nav.activity')}
+            </a>
+          </li>
+          <li>
             <a href="#/connections" aria-current={page.name === 'connections' ? 'page' : undefined}>
               {t('nav.connections')}
             </a>
@@ -95,6 +112,7 @@ function App() {
   const { user, loading, logout } = useAuth()
   const page = usePage()
   const connections = useConnections()
+  const runs = useActiveRuns(Boolean(user))
   const { t } = useI18n()
 
   if (loading) return <main className="auth">{t('app.loading')}</main>
@@ -106,6 +124,7 @@ function App() {
       <main className="home">
         <header>
           <ConnectionsBadge state={connections} />
+          <ActivityBadge state={runs} />
           <span className="user">{user.email}</span>
           <button type="button" onClick={logout}>
             {t('app.logout')}
@@ -114,8 +133,15 @@ function App() {
         {page.name === 'projects' && <ProjectsPage />}
         {page.name === 'resources' && <LibraryPage />}
         {page.name === 'connections' && <ConnectionsPage state={connections} />}
+        {page.name === 'activity' && <ActivityPage state={runs} />}
         {page.name === 'workspace' && (
-          <ProjectWorkspace key={page.projectId} projectId={page.projectId} connections={connections} />
+          <ProjectWorkspace
+            key={page.projectId}
+            projectId={page.projectId}
+            runId={page.runId}
+            connections={connections}
+            runs={runs}
+          />
         )}
         {page.name === 'home' && <Dashboard name={user.email.split('@')[0]} connections={connections} />}
       </main>

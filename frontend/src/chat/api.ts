@@ -1,4 +1,5 @@
-import { api, apiStream } from "../api/client";
+import { api } from "../api/client";
+import type { RunStatus, WaitReason } from "../runs/api";
 import type { Attachment } from "./attachments";
 
 export interface Workspace {
@@ -43,12 +44,17 @@ export interface SendMessage {
   model?: string;
 }
 
-/** A past conversation of the project. */
+/** A conversation of the project, with its turn in progress if any. */
 export interface SessionSummary {
-  sessionId: string;
+  /** Null for a new conversation whose first turn hasn't got its id yet: open it by `runId`. */
+  sessionId: string | null;
   provider: string;
   title: string;
   updatedAt: string;
+  runId: number | null;
+  activeRun: { runId: number; status: RunStatus; reason: WaitReason | null } | null;
+  /** Its last answer arrived after the user last looked. */
+  unread: boolean;
 }
 
 export interface HistoryTool {
@@ -76,7 +82,9 @@ export interface HistoryMessage {
 export interface SessionHistory {
   sessionId: string;
   provider: string;
+  /** Finished turns only: a turn in progress is in `lastRun`, to follow. */
   messages: HistoryMessage[];
+  lastRun: { runId: number; status: RunStatus; input: string } | null;
 }
 
 export const chatApi = {
@@ -91,6 +99,10 @@ export const chatApi = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  send: (body: SendMessage, signal: AbortSignal) =>
-    apiStream<ChatEvent>("/chat/messages", body, signal),
+  /** Queues the turn; follow it with runsApi.follow. 409 while the conversation has one going. */
+  send: (body: SendMessage) =>
+    api<{ runId: number }>("/chat/messages", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

@@ -89,9 +89,18 @@ export class ConnectionsService {
     });
   }
 
+  /** Also cancels the user's queued runs on that provider: they could only fail. */
   async remove(userId: number, provider: string) {
     await this.prisma.providerConnection.deleteMany({
       where: { userId, provider },
+    });
+    await this.prisma.run.updateMany({
+      where: { userId, provider, status: 'queued' },
+      data: {
+        status: 'aborted',
+        error: 'Connessione al provider rimossa',
+        finishedAt: new Date(),
+      },
     });
   }
 

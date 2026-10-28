@@ -12,7 +12,16 @@ import type { AgentResource } from "../agents/api";
 import type { ConnectionStatus } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
-import { chatApi, type HistoryMessage, type Workspace } from "./api";
+import { isActive, runsApi, type Run, type RunStatus } from "../runs/api";
+import { reasonText } from "../runs/reason";
+import { STATUS_KEY, type ActiveRunsState } from "../runs/useActiveRuns";
+import {
+  chatApi,
+  type HistoryMessage,
+  type SessionSummary,
+  type Workspace,
+} from "./api";
+import { SearchSelect } from "./SearchSelect";
 import { SessionList } from "./Sessions";
 import {
   AgentTrail,
@@ -62,11 +71,17 @@ interface Props {
   connections: ConnectionStatus[];
   /** Provider details a turn reported, e.g. Claude's plan usage. */
   onUsage: (provider: string, details: Record<string, unknown>) => void;
+  /** The user's runs, kept live: where the turn being followed stands. */
+  runs: ActiveRunsState;
+  /** Chat run to show, from a link: its conversation, or the turn alone while it has none. */
+  open: Run | null;
 }
 
 /**
  * Chat inside one folder, with an agent or straight with the model, which may
- * then delegate to the project's agents. Remount it (key) to switch folders.
+ * then delegate to the project's agents. Each turn runs in the background:
+ * switching conversation or leaving only stops following it, and opening the
+ * conversation again picks it up. Remount it (key) to switch folders.
  */
 export function ChatPanel({
   projectId,
@@ -74,8 +89,11 @@ export function ChatPanel({
   agents,
   connections,
   onUsage,
+  runs,
+  open,
 }: Props) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const { markSeen } = runs;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [model, setModel] = useState("");
@@ -96,6 +114,10 @@ export function ChatPanel({
   /** Past conversations shown in place of the chat. */
   const [showSessions, setShowSessions] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  /** Run of the turn being followed. */
+  const [turnRun, setTurnRun] = useState<number | null>(null);
+  const turn = turnRun !== null ? runs.find(turnRun) : undefined;
+  /** Stops following the current turn; the turn itself goes on. */
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -230,22 +252,43 @@ export function ChatPanel({
     setAttachError(null);
     stickRef.current = true;
     setStreaming(true);
+    try {
+      const { runId } = await chatApi.send({
+        projectId,
+        agent: agent?.key,
+        message: text,
+        attachments: files.length ? files : undefined,
+        sessionId,
+        model: model || undefined,
+      });
+      void followTurn(runId, replyId);
+    } catch (err) {
+      update(replyId, (m) => ({
+        ...m,
+        streaming: false,
+        error: err instanceof Error ? err.message : t("chat.sendFailed"),
+      }));
+      setStreaming(false);
+    }
+  }
+
+  function stopFollowing() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
+    setTurnRun(null);
+  }
+
+  /** Shows the turn's events from its first one, into the reply `replyId`. */
+  async function followTurn(runId: number, replyId: number) {
+    abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
-
+    setTurnRun(runId);
+    setStreaming(true);
+    let ended: RunStatus | null = null;
     try {
-      const events = chatApi.send(
-        {
-          projectId,
-          agent: agent?.key,
-          message: text,
-          attachments: files.length ? files : undefined,
-          sessionId,
-          model: model || undefined,
-        },
-        abort.signal,
-      );
-      for await (const event of events) {
+      for await (const event of runsApi.follow(runId, abort.signal)) {
         switch (event.type) {
           case "session":
             setSessionId(event.sessionId);
@@ -314,6 +357,9 @@ export function ChatPanel({
                 : m.error,
             }));
             break;
+          case "finished":
+            ended = event.status;
+            break;
         }
       }
     } catch (err) {
@@ -323,18 +369,45 @@ export function ChatPanel({
           error: err instanceof Error ? err.message : t("chat.sendFailed"),
         }));
       }
-    } finally {
-      update(replyId, (m) => ({
-        ...m,
-        streaming: false,
-        error:
-          abort.signal.aborted && !m.meta ? t("chat.interrupted") : m.error,
-        delegations: m.delegations.map((d) =>
-          d.status === "running" ? { ...d, status: "failed" } : d,
-        ),
-      }));
-      setStreaming(false);
     }
+    // Stopped following (another conversation, or leaving): the turn goes on.
+    if (abort.signal.aborted) return;
+    update(replyId, (m) => ({
+      ...m,
+      streaming: false,
+      error:
+        ended === "aborted" && !m.meta
+          ? t("chat.interrupted")
+          : ended === "interrupted"
+            ? t("run.interruptedByBackend")
+            : m.error,
+      delegations: m.delegations.map((d) =>
+        d.status === "running" ? { ...d, status: "failed" } : d,
+      ),
+    }));
+    abortRef.current = null;
+    setStreaming(false);
+    setTurnRun(null);
+    if (!document.hidden) markSeen(runId);
+  }
+
+  /** Shows a turn still going, after the finished ones, and follows it. */
+  function showTurn(runId: number, input: string) {
+    const userId = nextId.current++;
+    const replyId = nextId.current++;
+    setMessages((list) => [
+      ...list,
+      { id: userId, role: "user", text: input, tools: [], delegations: [] },
+      {
+        id: replyId,
+        role: "assistant",
+        text: "",
+        tools: [],
+        delegations: [],
+        streaming: true,
+      },
+    ]);
+    void followTurn(runId, replyId);
   }
 
   function onSubmit(e: FormEvent) {
@@ -350,26 +423,67 @@ export function ChatPanel({
   }
 
   function newConversation() {
+    stopFollowing();
     setSessionId(undefined);
     setSessionProvider(undefined);
     setMessages([]);
     setFocus(null);
   }
 
-  /** A past conversation as the chat's own: shown, and continued by the next message. */
-  async function openSession(id: string) {
-    const history = await chatApi.history(projectId, id);
-    setMessages(history.messages.map(fromHistory));
-    setSessionId(history.sessionId);
-    setSessionProvider(history.provider);
-    const provider = connections.find((c) =>
-      c.models.some((m) => m.value === model),
-    )?.provider;
-    if (provider && provider !== history.provider) setModel("");
+  /**
+   * A conversation as the chat's own: shown, with its turn in progress
+   * followed, and continued by the next message. One still without an id is
+   * only its first turn.
+   */
+  async function openSession(session: Pick<SessionSummary, "sessionId" | "runId">) {
+    if (session.sessionId === null) {
+      const run = await runsApi.get(session.runId!);
+      stopFollowing();
+      setMessages([]);
+      setSessionId(run.sessionId ?? undefined);
+      setSessionProvider(run.provider ?? undefined);
+      if (isActive(run.status)) {
+        showTurn(run.id, run.input);
+      } else {
+        // Ended before the provider saved anything: only the run knows of it.
+        setMessages([
+          { id: nextId.current++, role: "user", text: run.input, tools: [], delegations: [] },
+          {
+            id: nextId.current++,
+            role: "assistant",
+            text: "",
+            tools: [],
+            delegations: [],
+            error: run.error ?? t(STATUS_KEY[run.status]),
+          },
+        ]);
+      }
+    } else {
+      const history = await chatApi.history(projectId, session.sessionId);
+      stopFollowing();
+      setMessages(history.messages.map(fromHistory));
+      setSessionId(history.sessionId);
+      setSessionProvider(history.provider);
+      const provider = connections.find((c) =>
+        c.models.some((m) => m.value === model),
+      )?.provider;
+      if (provider && provider !== history.provider) setModel("");
+      const last = history.lastRun;
+      if (last && isActive(last.status)) showTurn(last.runId, last.input);
+      else if (last) markSeen(last.runId);
+    }
     setFocus(null);
     setShowSessions(false);
     stickRef.current = true;
   }
+
+  // A link to a chat run opens its conversation.
+  useEffect(() => {
+    if (!open || !workspace) return;
+    void openSession({ sessionId: open.sessionId, runId: open.id });
+    // Only when the link changes, once the folder is known.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, Boolean(workspace)]);
 
   function fromHistory(m: HistoryMessage): Message {
     return {
@@ -442,7 +556,6 @@ export function ChatPanel({
           <button
             type="button"
             className="link"
-            disabled={streaming}
             aria-pressed={showSessions}
             onClick={() => setShowSessions((shown) => !shown)}
           >
@@ -453,7 +566,6 @@ export function ChatPanel({
           <button
             type="button"
             className="link"
-            disabled={streaming}
             onClick={() => {
               newConversation();
               setShowSessions(false);
@@ -549,7 +661,11 @@ export function ChatPanel({
                 )}
                 {m.text && <div className="bubble">{m.text}</div>}
                 {m.streaming && !m.text && (
-                  <div className="bubble typing">{t("chat.thinking")}</div>
+                  <div className="bubble typing">
+                    {turn?.status === "queued"
+                      ? reasonText(turn.reason, t, language)
+                      : t("chat.thinking")}
+                  </div>
                 )}
                 {m.error && (
                   <p className="error" role="alert">
@@ -626,7 +742,10 @@ export function ChatPanel({
                 <button
                   type="button"
                   className="secondary"
-                  onClick={() => abortRef.current?.abort()}
+                  disabled={turnRun === null}
+                  onClick={() => {
+                    if (turnRun !== null) void runsApi.abort(turnRun);
+                  }}
                 >
                   {t("chat.stop")}
                 </button>
@@ -640,40 +759,44 @@ export function ChatPanel({
               )}
             </div>
             <div className="row">
-              <select
-                aria-label={t("chat.agentLabel")}
+              <SearchSelect
+                ariaLabel={t("chat.agentLabel")}
                 value={agentKey}
                 disabled={streaming}
-                onChange={(e) => switchAgent(e.target.value)}
-              >
-                <option value="">{t("chat.directOption")}</option>
-                {agents.map((a) => (
-                  <option key={a.key} value={a.key}>
-                    {a.key} · {t(FILE_ACCESS_KEY[a.effective.files])}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label={t("chat.modelLabel")}
+                onChange={switchAgent}
+                searchPlaceholder={t("chat.searchOptions")}
+                emptyText={t("chat.noMatches")}
+                options={[
+                  { value: "", label: t("chat.directOption") },
+                  ...agents.map((a) => ({
+                    value: a.key,
+                    label: `${a.key} · ${t(FILE_ACCESS_KEY[a.effective.files])}`,
+                  })),
+                ]}
+              />
+              <SearchSelect
+                ariaLabel={t("chat.modelLabel")}
                 value={model}
                 disabled={streaming}
-                onChange={(e) => chooseModel(e.target.value)}
-              >
-                <option value="">
-                  {agent?.model
-                    ? t("chat.agentModel", { model: agent.model })
-                    : t("chat.defaultModel")}
-                </option>
-                {connections.map((c) => (
-                  <optgroup key={c.provider} label={c.label}>
-                    {c.models.map((m) => (
-                      <option key={m.value} value={m.value}>
-                        {m.displayName}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+                onChange={chooseModel}
+                searchPlaceholder={t("chat.searchOptions")}
+                emptyText={t("chat.noMatches")}
+                options={[
+                  {
+                    value: "",
+                    label: agent?.model
+                      ? t("chat.agentModel", { model: agent.model })
+                      : t("chat.defaultModel"),
+                  },
+                  ...connections.flatMap((c) =>
+                    c.models.map((m) => ({
+                      value: m.value,
+                      label: m.displayName,
+                      group: c.label,
+                    })),
+                  ),
+                ]}
+              />
               <small>{t("chat.hint")}</small>
             </div>
           </form>

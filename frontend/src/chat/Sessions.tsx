@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { LOCALES } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
+import { reasonText } from "../runs/reason";
+import { STATUS_KEY } from "../runs/useActiveRuns";
 import { chatApi, type SessionSummary } from "./api";
 
-/** The project's past conversations; picking one loads it into the chat. */
+/** The project's conversations, the ones with a turn going marked; picking one loads it into the chat. */
 export function SessionList({
   projectId,
   current,
@@ -15,12 +17,13 @@ export function SessionList({
   /** Session open in the chat, marked in the list. */
   current: string | undefined;
   providerLabel: (provider: string) => string;
-  onOpen: (sessionId: string) => Promise<void>;
+  onOpen: (session: SessionSummary) => Promise<void>;
   onBack: () => void;
 }) {
   const { t, language } = useI18n();
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Key of the item being opened. */
   const [opening, setOpening] = useState<string | null>(null);
 
   useEffect(() => {
@@ -31,11 +34,11 @@ export function SessionList({
       );
   }, [projectId, t]);
 
-  async function open(sessionId: string) {
+  async function open(session: SessionSummary) {
     setError(null);
-    setOpening(sessionId);
+    setOpening(keyOf(session));
     try {
-      await onOpen(sessionId);
+      await onOpen(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("sessions.openFailed"));
       setOpening(null);
@@ -65,7 +68,7 @@ export function SessionList({
       {sessions && sessions.length > 0 && (
         <ul className="session-list">
           {sessions.map((s) => (
-            <li key={s.sessionId}>
+            <li key={keyOf(s)}>
               <button
                 type="button"
                 className={
@@ -75,16 +78,30 @@ export function SessionList({
                 }
                 aria-current={s.sessionId === current ? "true" : undefined}
                 disabled={opening !== null}
-                onClick={() => void open(s.sessionId)}
+                onClick={() => void open(s)}
               >
                 <span className="session-title">
-                  {s.title || t("sessions.untitled")}
+                  {s.activeRun && (
+                    <span className="dot busy" aria-hidden="true" />
+                  )}
+                  {s.unread && <span className="dot unread" aria-hidden="true" />}
+                  {s.title ||
+                    t(s.sessionId ? "sessions.untitled" : "sessions.new")}
                 </span>
                 <small>
-                  {date.format(new Date(s.updatedAt))} ·{" "}
-                  {providerLabel(s.provider)}
-                  {s.sessionId === current && ` · ${t("sessions.current")}`}
-                  {s.sessionId === opening && ` · ${t("sessions.loading")}`}
+                  {date.format(new Date(s.updatedAt))}
+                  {s.provider && ` · ${providerLabel(s.provider)}`}
+                  {s.activeRun &&
+                    ` · ${
+                      s.activeRun.status === "queued"
+                        ? reasonText(s.activeRun.reason, t, language)
+                        : t(STATUS_KEY[s.activeRun.status])
+                    }`}
+                  {s.unread && ` · ${t("sessions.unread")}`}
+                  {s.sessionId !== null &&
+                    s.sessionId === current &&
+                    ` · ${t("sessions.current")}`}
+                  {keyOf(s) === opening && ` · ${t("sessions.loading")}`}
                 </small>
               </button>
             </li>
@@ -93,4 +110,9 @@ export function SessionList({
       )}
     </div>
   );
+}
+
+/** A conversation's id, or its first turn's while it has none. */
+function keyOf(s: SessionSummary) {
+  return s.sessionId ?? `run:${s.runId}`;
 }

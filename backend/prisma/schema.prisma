@@ -18,6 +18,7 @@ model User {
   connections ProviderConnection[]
   projects    Project[]
   resources   Resource[]
+  runs        Run[]
 }
 
 /// A user's connection to an agent provider (Claude Code, OpenCode, ...).
@@ -50,8 +51,8 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  resources    ProjectResource[]
-  workflowRuns WorkflowRun[]
+  resources ProjectResource[]
+  runs      Run[]
 
   @@unique([userId, path])
   @@index([userId])
@@ -89,19 +90,70 @@ model ProjectResource {
   @@unique([projectId, kind, key])
 }
 
-model WorkflowRun {
-  id        Int      @id @default(autoincrement())
-  projectId Int
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  /// Key of the workflow in the catalog.
-  workflow  String
-  input     String
-  /// "running", "done", "failed" or "aborted"
-  status    String
+/// A workflow run or a chat turn, executed in the background: it outlives the request that started it.
+model Run {
+  id           Int       @id @default(autoincrement())
+  projectId    Int
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// "workflow" or "chat"
+  kind         String    @default("workflow")
+  /// "queued", "running", "waiting", "done", "failed", "aborted" or "interrupted"
+  status       String
+  /// "manual", "schedule" or "webhook"
+  trigger      String    @default("manual")
+  /// Shown in lists: the workflow's key, or the chat message cut short.
+  title        String    @default("")
+  /// What the user typed: the workflow's input or the chat message.
+  input        String
+  /// Key of the workflow in the catalog (workflow runs only).
+  workflow     String?
+  /// Hash of the workflow's definition when the run was created, to refuse resuming a changed one.
+  workflowHash String?
+  /// Chat only: the conversation (`<provider>:<id>`); null until the provider assigns it.
+  sessionId    String?
+  /// Chat only: catalog agent that answers; null chats with the model directly.
+  agent        String?
+  /// Chat only: `<provider>:<model>` chosen for the turn.
+  model        String?
+  /// Provider expected to run it, to hold it back while that provider's limit is reached.
+  provider     String?
+  /// Whether some agent of the run may write files in the project folder.
+  writes       Boolean   @default(false)
   /// Steps run so far (JSON): [{ agent, output, isError }]
-  stepsJson String   @default("[]")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  stepsJson    String    @default("[]")
+  costUsd      Float     @default(0)
+  error        String?
+  /// Run this one resumes.
+  resumeOf     Int?
+  startedAt    DateTime?
+  /// Refreshed while the run executes; a stale one means its process died.
+  heartbeatAt  DateTime?
+  finishedAt   DateTime?
+  /// Last time the user opened it: a run finished after this is unread.
+  seenAt       DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  events RunEvent[]
 
   @@index([projectId])
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@index([sessionId])
+  @@map("WorkflowRun")
+}
+
+/// Every event a run emitted, in order, so a client can catch up on it at any time.
+model RunEvent {
+  id        Int      @id @default(autoincrement())
+  runId     Int
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// 1, 2, 3... within the run: the cursor clients resume from.
+  seq       Int
+  dataJson  String
+  createdAt DateTime @default(now())
+
+  @@unique([runId, seq])
 }

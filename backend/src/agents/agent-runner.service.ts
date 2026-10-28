@@ -183,7 +183,10 @@ export class AgentRunnerService {
    * stays with its provider; otherwise the chosen model decides, then the
    * agent's, then the first provider connected.
    */
-  private async target(req: RunRequest, agent?: AgentSpec) {
+  private async target(
+    req: Pick<RunRequest, 'userId' | 'sessionId' | 'model'>,
+    agent?: AgentSpec,
+  ) {
     const ids = this.providers.ids();
     const session = req.sessionId ? parseRef(req.sessionId, ids) : null;
     const chosen = req.model ? parseRef(req.model, ids) : null;
@@ -201,6 +204,22 @@ export class AgentRunnerService {
     const model =
       chosen?.id ?? (own?.provider === provider.id ? own.id : undefined);
     return { provider, model, sessionId: session?.id };
+  }
+
+  /**
+   * What `run` would refuse, checked without running: the agent, the provider
+   * and the model. Returns the provider and whether the turn may write files.
+   */
+  async check(req: Omit<RunRequest, 'prompt' | 'signal'>) {
+    const chosen = req.agent
+      ? await this.agentFor(req.userId, req.project.id, req.agent)
+      : null;
+    const { provider } = await this.target(req, chosen?.agent);
+    // A direct chat may write: it gets everything the project has on.
+    return {
+      provider: provider.id,
+      writes: chosen ? chosen.policy.files === 'write' : true,
+    };
   }
 
   /** Yields chat events as the provider streams them. */

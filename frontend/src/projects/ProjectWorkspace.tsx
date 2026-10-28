@@ -5,12 +5,17 @@ import { ChatPanel } from '../chat/ChatPanel'
 import type { ConnectionsState } from '../connections/useConnections'
 import { useI18n } from '../i18n/useI18n'
 import type { MessageKey } from '../i18n/messages'
+import { runsApi, type Run } from '../runs/api'
+import type { ActiveRunsState } from '../runs/useActiveRuns'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
 
 interface Props {
   projectId: number
+  /** Run to open: its conversation in the chat, or its workflow run. */
+  runId?: number
   connections: ConnectionsState
+  runs: ActiveRunsState
 }
 
 type Tab = 'chat' | 'workflows' | 'resources'
@@ -22,7 +27,7 @@ const TABS: [Tab, MessageKey][] = [
 ]
 
 /** One project's workspace: chat, workflows and the agents it has on. Key it by project. */
-export function ProjectWorkspace({ projectId, connections }: Props) {
+export function ProjectWorkspace({ projectId, runId, connections, runs }: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
@@ -41,6 +46,17 @@ export function ProjectWorkspace({ projectId, connections }: Props) {
   }, [projectId])
 
   useEffect(loadResources, [loadResources])
+
+  /** The run the URL points at, handed to the panel that shows it. */
+  const [opened, setOpened] = useState<Run | null>(null)
+  useEffect(() => {
+    if (!runId) return
+    runsApi.get(runId).then((run) => {
+      if (run.projectId !== projectId) return
+      setOpened(run)
+      setTab(run.kind === 'chat' ? 'chat' : 'workflows')
+    }, fail)
+  }, [runId, projectId])
 
   const connected = connections.connected.length > 0
   const agents = resources?.agents.filter((a) => a.enabled) ?? []
@@ -97,6 +113,8 @@ export function ProjectWorkspace({ projectId, connections }: Props) {
                 agents={agents}
                 connections={connections.connected}
                 onUsage={connections.updateDetails}
+                runs={runs}
+                open={opened?.kind === 'chat' ? opened : null}
               />
             </div>
           )}
@@ -106,6 +124,8 @@ export function ProjectWorkspace({ projectId, connections }: Props) {
                 projectId={project.id}
                 workflows={resources.workflows.filter((w) => w.enabled)}
                 onUsage={connections.updateDetails}
+                runs={runs}
+                open={opened?.kind === 'workflow' ? opened : null}
               />
             </div>
           )}

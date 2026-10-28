@@ -2,15 +2,14 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Post,
   Req,
-  Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
-import { closeSignal, sendEvents } from '../common/sse.js';
 import { WorkflowRunDto } from './dto/workflow-run.dto.js';
 import { WorkflowsService } from './workflows.service.js';
 
@@ -27,22 +26,15 @@ export class WorkflowsController {
     return this.workflows.runs(req.user.sub, projectId);
   }
 
-  /** Runs a workflow, streaming its steps as Server-Sent Events. */
+  /** Queues a run of the workflow; follow it with GET /runs/:id/events. */
   @Post(':key/runs')
-  async run(
+  @HttpCode(HttpStatus.ACCEPTED)
+  run(
     @Req() req: AuthenticatedRequest,
-    @Res() res: Response,
     @Param('projectId', ParseIntPipe) projectId: number,
     @Param('key') key: string,
     @Body() dto: WorkflowRunDto,
   ) {
-    const events = this.workflows.run(
-      req.user.sub,
-      projectId,
-      key,
-      dto.input,
-      closeSignal(res),
-    );
-    await sendEvents(res, events);
+    return this.workflows.create(req.user.sub, projectId, key, dto.input);
   }
 }
