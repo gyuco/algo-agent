@@ -1458,3 +1458,22 @@ a.button.secondary {
   padding: 0.5rem;
   color: var(--text);
 }
+
+.tools.permissions li.missing {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.secrets .overridden code {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.secret-form {
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.secret-form input:not(.grow) {
+  width: 14rem;
+}

@@ -14,6 +14,8 @@ interface Resource {
   key: string
   description: string
   enabled: boolean
+  /** Defined for this project only, not in the library. */
+  own?: boolean
 }
 
 export interface AgentResource extends Resource {
@@ -24,6 +26,12 @@ export interface AgentResource extends Resource {
   effective: Permissions
 }
 
+export interface McpResource extends Resource {
+  type: 'stdio' | 'http'
+  /** Secrets it refers to as `${NAME}`. */
+  needs: string[]
+}
+
 export interface WorkflowResource extends Resource {
   input: string
   agents: string[]
@@ -32,7 +40,7 @@ export interface WorkflowResource extends Resource {
 export interface ProjectResources {
   agents: AgentResource[]
   tools: Resource[]
-  mcp: (Resource & { type: 'stdio' | 'http' })[]
+  mcp: McpResource[]
   skills: Resource[]
   workflows: WorkflowResource[]
 }

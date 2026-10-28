@@ -127,7 +127,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     project: { id: number; path: string },
     key: string,
   ) {
-    const catalog = await this.catalogService.forUser(userId);
+    const catalog = await this.catalogService.forProject(userId, project.id);
     const workflow = catalog.workflows.get(key);
     const enabled = await this.resources.isEnabled(project.id, catalog);
     if (!workflow || !enabled('workflow', key)) {

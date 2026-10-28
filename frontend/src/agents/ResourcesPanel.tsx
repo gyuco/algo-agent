@@ -1,11 +1,19 @@
 import { useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n/useI18n'
-import { resourcesApi, type AgentResource, type ProjectResources, type ResourceKind } from './api'
+import {
+  resourcesApi,
+  type AgentResource,
+  type McpResource,
+  type ProjectResources,
+  type ResourceKind,
+} from './api'
 import { FILE_ACCESS_KEY } from './labels'
 
 interface Props {
   projectId: number
   resources: ProjectResources
+  /** Secrets runs here can use, to point out what an MCP server is missing; null while loading. */
+  secretNames: string[] | null
   /** Called after a switch so the workspace reloads what the project has on. */
   onChange: () => void
 }
@@ -14,10 +22,11 @@ interface Item {
   key: string
   description: string
   enabled: boolean
+  own?: boolean
 }
 
 /** Catalog resources of one project, each with its on/off switch. Definitions live in backend/catalog. */
-export function ResourcesPanel({ projectId, resources, onChange }: Props) {
+export function ResourcesPanel({ projectId, resources, secretNames, onChange }: Props) {
   const { t } = useI18n()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -59,6 +68,7 @@ export function ResourcesPanel({ projectId, resources, onChange }: Props) {
                     onChange={() => void toggle(kind, item)}
                   />
                   <strong>{item.key}</strong>
+                  {item.own && <span className="badge accent">{t('resources.ownBadge')}</span>}
                 </label>
                 <span className="hint">{item.description}</span>
                 {extra?.(item)}
@@ -86,7 +96,9 @@ export function ResourcesPanel({ projectId, resources, onChange }: Props) {
       ))}
       {section(t('kind.workflows'), 'workflow', resources.workflows)}
       {section(t('kind.tools'), 'tool', resources.tools)}
-      {section(t('kind.mcps'), 'mcp', resources.mcp)}
+      {section(t('kind.mcps'), 'mcp', resources.mcp, (item) => (
+        <McpNeeds mcp={item as McpResource} secretNames={secretNames} />
+      ))}
       {section(t('kind.skills'), 'skill', resources.skills)}
     </div>
   )
@@ -115,6 +127,24 @@ function AgentPermissions({ agent }: { agent: AgentResource }) {
           </li>
         )),
       )}
+    </ul>
+  )
+}
+
+/** The secrets an MCP server refers to, the missing ones marked. */
+function McpNeeds({ mcp, secretNames }: { mcp: McpResource; secretNames: string[] | null }) {
+  const { t } = useI18n()
+  if (mcp.needs.length === 0) return null
+  return (
+    <ul className="tools permissions">
+      {mcp.needs.map((name) => {
+        const missing = secretNames !== null && !secretNames.includes(name)
+        return (
+          <li key={name} className={missing ? 'missing' : ''}>
+            {t(missing ? 'resources.secretMissing' : 'resources.secret', { name })}
+          </li>
+        )
+      })}
     </ul>
   )
 }

@@ -144,6 +144,10 @@ export interface Catalog {
   mcp: Map<string, McpSpec>;
   skills: Map<string, SkillSpec>;
   workflows: Map<string, WorkflowSpec>;
+  /** Values of the `${NAME}` in MCP env and headers: the secrets of the user and of the project running. */
+  variables: Record<string, string>;
+  /** The project's own resources, as `kind:key`; the rest is the library and the app tools. */
+  own: Set<string>;
 }
 
 /** An invalid resource, or one that refers to a resource that doesn't exist. */
@@ -167,6 +171,8 @@ export function buildCatalog(entries: CatalogEntry[]): Catalog {
     mcp: new Map(),
     skills: new Map(),
     workflows: new Map(),
+    variables: {},
+    own: new Set(),
   };
   const maps = {
     agent: catalog.agents,

@@ -58,22 +58,26 @@ export interface Library {
   mcp: Keyed<McpSpec>[]
   skills: Keyed<SkillSpec>[]
   workflows: Keyed<WorkflowSpec>[]
+  /** In a project: its own resources, as `kind:key`; the rest is the library. */
+  own: string[]
   /** Whether this user may define MCP servers that run commands on the server. */
   stdioAllowed: boolean
 }
 
 export type { FileAccess }
 
-const path = (kind: EditableKind, key: string) =>
-  `/resources/${kind}/${encodeURIComponent(key)}`
-
-export const libraryApi = {
-  get: () => api<Library>('/resources'),
-  create: <K extends EditableKind>(kind: K, key: string, spec: SpecByKind[K]) =>
-    api<null>(path(kind, key), { method: 'POST', body: JSON.stringify(spec) }),
-  update: <K extends EditableKind>(kind: K, key: string, spec: SpecByKind[K]) =>
-    api<null>(path(kind, key), { method: 'PUT', body: JSON.stringify(spec) }),
-  remove: (kind: EditableKind, key: string) => api<null>(path(kind, key), { method: 'DELETE' }),
-  importExamples: () =>
-    api<{ imported: string[] }>('/resources/import-examples', { method: 'POST' }),
+/** The library (projectId null), or one project's own resources next to the library. */
+export function libraryApiFor(projectId: number | null) {
+  const base = projectId === null ? '/resources' : `/projects/${projectId}/library`
+  const path = (kind: EditableKind, key: string) => `${base}/${kind}/${encodeURIComponent(key)}`
+  return {
+    get: () => api<Library>(base),
+    create: <K extends EditableKind>(kind: K, key: string, spec: SpecByKind[K]) =>
+      api<null>(path(kind, key), { method: 'POST', body: JSON.stringify(spec) }),
+    update: <K extends EditableKind>(kind: K, key: string, spec: SpecByKind[K]) =>
+      api<null>(path(kind, key), { method: 'PUT', body: JSON.stringify(spec) }),
+    remove: (kind: EditableKind, key: string) => api<null>(path(kind, key), { method: 'DELETE' }),
+    importExamples: () =>
+      api<{ imported: string[] }>('/resources/import-examples', { method: 'POST' }),
+  }
 }

@@ -34,7 +34,7 @@ export class AgentsController {
     await this.projects.get(req.user.sub, projectId);
     return this.resources.list(
       projectId,
-      await this.catalog.forUser(req.user.sub),
+      await this.catalog.forUser(req.user.sub, projectId),
     );
   }
 
@@ -53,7 +53,7 @@ export class AgentsController {
     }
     await this.resources.set(
       projectId,
-      await this.catalog.forUser(req.user.sub),
+      await this.catalog.forUser(req.user.sub, projectId),
       kind as ResourceKind,
       key,
       dto.enabled,

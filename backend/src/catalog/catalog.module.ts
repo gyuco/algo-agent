@@ -1,12 +1,17 @@
 import { Global, Module } from '@nestjs/common';
 import { ConnectionsModule } from '../connections/connections.module.js';
-import { CatalogController } from './catalog.controller.js';
+import { ProjectsModule } from '../projects/projects.module.js';
+import { VaultModule } from '../vault/vault.module.js';
+import {
+  CatalogController,
+  ProjectCatalogController,
+} from './catalog.controller.js';
 import { CatalogService } from './catalog.service.js';
 
 @Global()
 @Module({
-  imports: [ConnectionsModule],
-  controllers: [CatalogController],
+  imports: [ConnectionsModule, VaultModule, ProjectsModule],
+  controllers: [CatalogController, ProjectCatalogController],
   providers: [CatalogService],
   exports: [CatalogService],
 })

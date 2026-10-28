@@ -101,16 +101,19 @@ describe('runConfig subagents', () => {
 });
 
 describe('mcpServer', () => {
-  it('maps stdio and http servers, with ${VAR} filled in', () => {
-    process.env.OC_TEST_TOKEN = 'secret';
+  it('maps stdio and http servers, with ${VAR} filled in from the variables', () => {
+    const variables = { OC_TEST_TOKEN: 'secret' };
     expect(
-      mcpServer({
-        key: 'local',
-        type: 'stdio',
-        command: 'npx',
-        args: ['-y', 'srv'],
-        env: { TOKEN: '${OC_TEST_TOKEN}' },
-      } as never),
+      mcpServer(
+        {
+          key: 'local',
+          type: 'stdio',
+          command: 'npx',
+          args: ['-y', 'srv'],
+          env: { TOKEN: '${OC_TEST_TOKEN}' },
+        } as never,
+        variables,
+      ),
     ).toEqual({
       type: 'local',
       command: ['npx', '-y', 'srv'],
@@ -118,12 +121,15 @@ describe('mcpServer', () => {
       codemode: false,
     });
     expect(
-      mcpServer({
-        key: 'docs',
-        type: 'http',
-        url: 'https://x/mcp',
-        headers: { Authorization: 'Bearer ${OC_TEST_TOKEN}' },
-      } as never),
+      mcpServer(
+        {
+          key: 'docs',
+          type: 'http',
+          url: 'https://x/mcp',
+          headers: { Authorization: 'Bearer ${OC_TEST_TOKEN}' },
+        } as never,
+        variables,
+      ),
     ).toEqual({
       type: 'remote',
       url: 'https://x/mcp',

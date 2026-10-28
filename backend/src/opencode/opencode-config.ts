@@ -82,18 +82,21 @@ export interface SubagentConfig extends AgentConfig {
 const DIRECT = { codemode: false } as const;
 
 /** A catalog MCP server in OpenCode's config format. */
-export function mcpServer(spec: McpSpec): Record<string, unknown> {
+export function mcpServer(
+  spec: McpSpec,
+  variables: Record<string, string>,
+): Record<string, unknown> {
   return spec.type === 'stdio'
     ? {
         type: 'local',
         command: [spec.command, ...spec.args],
-        environment: interpolate(spec.env, spec.key),
+        environment: interpolate(spec.env, spec.key, variables),
         ...DIRECT,
       }
     : {
         type: 'remote',
         url: spec.url,
-        headers: interpolate(spec.headers, spec.key),
+        headers: interpolate(spec.headers, spec.key, variables),
         oauth: false,
         ...DIRECT,
       };

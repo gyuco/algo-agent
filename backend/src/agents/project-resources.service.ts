@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { AgentSpec, Catalog, ResourceKind } from '../catalog/catalog.js';
+import { variableNames } from '../catalog/runtime.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { AgentPolicy } from './policy.js';
 
@@ -50,12 +51,15 @@ export class ProjectResourcesService {
   /** The whole catalog with the project's switches, for the settings page. */
   async list(projectId: number, c: Catalog) {
     const enabled = await this.isEnabled(projectId, c);
+    const own = (kind: ResourceKind, key: string) =>
+      c.own.has(`${kind}:${key}`);
     return {
       agents: [...c.agents.values()].map((a) => ({
         key: a.key,
         description: a.description,
         model: a.model ?? null,
         enabled: enabled('agent', a.key),
+        own: own('agent', a.key),
         permissions: a.permissions,
         effective: this.policyFor(a, enabled),
       })),
@@ -69,11 +73,14 @@ export class ProjectResourcesService {
         description: m.description,
         type: m.type,
         enabled: enabled('mcp', m.key),
+        own: own('mcp', m.key),
+        needs: variableNames(m),
       })),
       skills: [...c.skills.values()].map((s) => ({
         key: s.key,
         description: s.description,
         enabled: enabled('skill', s.key),
+        own: own('skill', s.key),
       })),
       workflows: [...c.workflows.values()].map((w) => ({
         key: w.key,
@@ -81,6 +88,7 @@ export class ProjectResourcesService {
         input: w.input,
         agents: w.steps.map((s) => s.agent),
         enabled: enabled('workflow', w.key),
+        own: own('workflow', w.key),
       })),
     };
   }

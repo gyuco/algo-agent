@@ -5,7 +5,11 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
 
-/** Encrypts secrets at rest as `iv.authTag.ciphertext` (base64url). */
+/**
+ * Encrypts secrets at rest as `iv.authTag.ciphertext` (base64url). An optional
+ * `context` (authenticated, not stored) binds a ciphertext to where it belongs:
+ * copied to another row, it no longer decrypts.
+ */
 @Injectable()
 export class CryptoService {
   private readonly key: Buffer;
@@ -17,9 +21,10 @@ export class CryptoService {
     }
   }
 
-  encrypt(plaintext: string): string {
+  encrypt(plaintext: string, context?: string): string {
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv(ALGORITHM, this.key, iv);
+    if (context !== undefined) cipher.setAAD(Buffer.from(context, 'utf8'));
     const ciphertext = Buffer.concat([
       cipher.update(plaintext, 'utf8'),
       cipher.final(),
@@ -29,11 +34,12 @@ export class CryptoService {
       .join('.');
   }
 
-  decrypt(payload: string): string {
+  decrypt(payload: string, context?: string): string {
     const [iv, tag, ciphertext] = payload
       .split('.')
       .map((p) => Buffer.from(p, 'base64url'));
     const decipher = createDecipheriv(ALGORITHM, this.key, iv);
+    if (context !== undefined) decipher.setAAD(Buffer.from(context, 'utf8'));
     decipher.setAuthTag(tag);
     return Buffer.concat([
       decipher.update(ciphertext),

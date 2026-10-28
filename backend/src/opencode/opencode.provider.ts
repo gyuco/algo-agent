@@ -371,7 +371,10 @@ export class OpencodeProvider implements AgentProvider {
       servers[APP_SERVER] = appToolsServer(appTools.url, appTools.token);
     }
     for (const key of ctx.policy.mcp) {
-      servers[mcpServerName(key)] = mcpServer(ctx.catalog.mcp.get(key)!);
+      servers[mcpServerName(key)] = mcpServer(
+        ctx.catalog.mcp.get(key)!,
+        ctx.catalog.variables,
+      );
     }
     return servers;
   }

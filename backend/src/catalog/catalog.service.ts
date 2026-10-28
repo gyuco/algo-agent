@@ -11,6 +11,7 @@ import { ConnectionsService } from '../connections/connections.service.js';
 import { CryptoService } from '../crypto/crypto.service.js';
 import type { Resource } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { VaultService } from '../vault/vault.service.js';
 import {
   buildCatalog,
   CatalogError,
@@ -23,14 +24,18 @@ import {
 
 type Secrets = Record<string, string>;
 
+/** Where a resource lives: null for the library, else the project it belongs to. */
+export type Scope = number | null;
+
 /** The MCP field that holds secrets: env for a command, headers for a URL. */
 const secretField = (spec: { type?: unknown }) =>
   spec.type === 'stdio' ? 'env' : 'headers';
 
 /**
- * Each user's library of resources, kept in the DB. Every write is validated
- * against the whole library, so an agent can't refer to a missing MCP server
- * and a resource still in use can't be deleted.
+ * Each user's resources, kept in the DB: their library, usable in all their
+ * projects, and resources of one project only. A project sees both. Every
+ * write is validated against what the scope sees, so an agent can't refer to
+ * a missing MCP server and a resource still in use can't be deleted.
  */
 @Injectable()
 export class CatalogService {
@@ -39,6 +44,7 @@ export class CatalogService {
     private readonly crypto: CryptoService,
     private readonly config: ConfigService,
     private readonly connections: ConnectionsService,
+    private readonly vault: VaultService,
   ) {}
 
   /** Example resources shipped with the app (backend/catalog). */
@@ -64,23 +70,63 @@ export class CatalogService {
     return { kind: row.kind as EditableKind, key: row.key, spec };
   }
 
-  private rows(userId: number) {
+  /** Every resource of the user, in the library and in all their projects. */
+  private allRows(userId: number) {
     return this.prisma.resource.findMany({
       where: { userId },
       orderBy: { key: 'asc' },
     });
   }
 
-  /** The user's catalog with secrets, for running agents. */
-  async forUser(userId: number): Promise<Catalog> {
-    const rows = await this.rows(userId);
-    return buildCatalog(rows.map((r) => this.toEntry(r, true)));
+  /** What a scope sees: the library, plus the project's own resources. */
+  private visible(rows: Resource[], scope: Scope) {
+    return rows.filter((r) => r.projectId === null || r.projectId === scope);
   }
 
-  /** The user's library for the editor: secret values are never sent back. */
-  async library(userId: number) {
-    const rows = await this.rows(userId);
-    const catalog = buildCatalog(rows.map((r) => this.toEntry(r, false)));
+  private catalogOf(rows: Resource[], scope: Scope, withSecrets: boolean) {
+    const catalog = buildCatalog(
+      this.visible(rows, scope).map((r) => this.toEntry(r, withSecrets)),
+    );
+    for (const r of rows) {
+      if (scope !== null && r.projectId === scope) {
+        catalog.own.add(`${r.kind}:${r.key}`);
+      }
+    }
+    return catalog;
+  }
+
+  /** The catalog a scope sees, without the variables its MCP servers need to run. */
+  async forUser(userId: number, scope: Scope = null): Promise<Catalog> {
+    return this.catalogOf(await this.allRows(userId), scope, true);
+  }
+
+  /**
+   * The catalog a run in the project uses: `${NAME}` in MCP servers resolve to
+   * the project's secrets, then the user's. Only the app owner in personal mode
+   * falls back to the backend's environment: it's their machine.
+   */
+  async forProject(userId: number, projectId: number): Promise<Catalog> {
+    const [catalog, secrets, owner] = await Promise.all([
+      this.forUser(userId, projectId),
+      this.vault.variables(userId, projectId),
+      this.connections.isPersonalOwner(userId),
+    ]);
+    const env = owner
+      ? Object.fromEntries(
+          Object.entries(process.env).filter(
+            (e): e is [string, string] => e[1] !== undefined,
+          ),
+        )
+      : {};
+    return { ...catalog, variables: { ...env, ...secrets } };
+  }
+
+  /**
+   * The resources a scope sees, for the editor: secret values are never sent
+   * back. `own` lists the project's own ones as `kind:key`.
+   */
+  async library(userId: number, scope: Scope = null) {
+    const catalog = this.catalogOf(await this.allRows(userId), scope, false);
     return {
       agents: [...catalog.agents.values()],
       tools: [...catalog.tools.values()].map(
@@ -93,34 +139,62 @@ export class CatalogService {
       mcp: [...catalog.mcp.values()],
       skills: [...catalog.skills.values()],
       workflows: [...catalog.workflows.values()],
+      own: [...catalog.own],
       stdioAllowed: await this.connections.isPersonalOwner(userId),
     };
   }
 
-  async create(userId: number, kind: EditableKind, key: string, spec: unknown) {
-    const rows = await this.rows(userId);
-    if (rows.some((r) => r.kind === kind && r.key === key)) {
-      throw new ConflictException(`Esiste già: ${kind} ${key}`);
+  /** A project resource starts switched on in its project: it was made for it. */
+  async create(
+    userId: number,
+    scope: Scope,
+    kind: EditableKind,
+    key: string,
+    spec: unknown,
+  ) {
+    const rows = await this.allRows(userId);
+    const taken = rows.find((r) => r.kind === kind && r.key === key);
+    if (taken) {
+      throw new ConflictException(
+        taken.projectId === null
+          ? `Esiste già nella libreria: ${kind} ${key}`
+          : `Esiste già in un progetto: ${kind} ${key}`,
+      );
     }
-    await this.save(userId, rows, { kind, key, spec }, null);
+    await this.save(userId, scope, rows, { kind, key, spec }, null);
+    if (scope !== null) {
+      await this.prisma.projectResource.upsert({
+        where: { projectId_kind_key: { projectId: scope, kind, key } },
+        create: { projectId: scope, kind, key, enabled: true },
+        update: { enabled: true },
+      });
+    }
   }
 
   /** Replaces a resource. A blank MCP secret value keeps the stored one. */
-  async update(userId: number, kind: EditableKind, key: string, spec: unknown) {
-    const rows = await this.rows(userId);
-    const current = rows.find((r) => r.kind === kind && r.key === key);
-    if (!current) throw new NotFoundException('Risorsa non trovata');
-    await this.save(userId, rows, { kind, key, spec }, current);
+  async update(
+    userId: number,
+    scope: Scope,
+    kind: EditableKind,
+    key: string,
+    spec: unknown,
+  ) {
+    const rows = await this.allRows(userId);
+    const current = this.find(rows, scope, kind, key);
+    await this.save(userId, scope, rows, { kind, key, spec }, current);
   }
 
-  async remove(userId: number, kind: EditableKind, key: string) {
-    const rows = await this.rows(userId);
-    const current = rows.find((r) => r.kind === kind && r.key === key);
-    if (!current) throw new NotFoundException('Risorsa non trovata');
+  async remove(userId: number, scope: Scope, kind: EditableKind, key: string) {
+    const rows = await this.allRows(userId);
+    const current = this.find(rows, scope, kind, key);
+    const rest = rows.filter((r) => r !== current);
+    // A library resource may be in use in any project; a project's only there.
+    const scopes =
+      scope === null
+        ? [null, ...new Set(rest.flatMap((r) => r.projectId ?? []))]
+        : [scope];
     try {
-      buildCatalog(
-        rows.filter((r) => r !== current).map((r) => this.toEntry(r, true)),
-      );
+      for (const s of scopes) this.catalogOf(rest, s, true);
     } catch (error) {
       if (error instanceof CatalogError) {
         throw new ConflictException(`Ancora in uso: ${error.message}`);
@@ -135,9 +209,9 @@ export class CatalogService {
     ]);
   }
 
-  /** Adds the example resources the user doesn't have yet; returns their keys. */
+  /** Adds to the library the examples whose key the user doesn't use yet; returns their keys. */
   async importExamples(userId: number) {
-    const rows = await this.rows(userId);
+    const rows = await this.allRows(userId);
     const have = new Set(rows.map((r) => `${r.kind}:${r.key}`));
     const allowStdio = await this.connections.isPersonalOwner(userId);
     const added = (await readCatalogDir(this.examplesDir())).filter(
@@ -148,7 +222,7 @@ export class CatalogService {
           secretField(e.spec as object) !== 'env'),
     );
     const catalog = this.validate([
-      ...rows.map((r) => this.toEntry(r, true)),
+      ...this.visible(rows, null).map((r) => this.toEntry(r, true)),
       ...added,
     ]);
     await this.prisma.$transaction(
@@ -166,8 +240,22 @@ export class CatalogService {
     return { imported: added.map((e) => `${e.kind}:${e.key}`) };
   }
 
+  private find(
+    rows: Resource[],
+    scope: Scope,
+    kind: EditableKind,
+    key: string,
+  ) {
+    const row = rows.find(
+      (r) => r.kind === kind && r.key === key && r.projectId === scope,
+    );
+    if (!row) throw new NotFoundException('Risorsa non trovata');
+    return row;
+  }
+
   private async save(
     userId: number,
+    scope: Scope,
     rows: Resource[],
     entry: CatalogEntry,
     current: Resource | null,
@@ -176,7 +264,9 @@ export class CatalogService {
       entry = { ...entry, spec: this.keepSecrets(entry.spec, current) };
     }
     const catalog = this.validate([
-      ...rows.filter((r) => r !== current).map((r) => this.toEntry(r, true)),
+      ...this.visible(rows, scope)
+        .filter((r) => r !== current)
+        .map((r) => this.toEntry(r, true)),
       entry,
     ]);
     if (
@@ -192,7 +282,13 @@ export class CatalogService {
     await (current
       ? this.prisma.resource.update({ where: { id: current.id }, data })
       : this.prisma.resource.create({
-          data: { userId, kind: entry.kind, key: entry.key, ...data },
+          data: {
+            userId,
+            projectId: scope,
+            kind: entry.kind,
+            key: entry.key,
+            ...data,
+          },
         }));
   }
 

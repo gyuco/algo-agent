@@ -19,6 +19,7 @@ model User {
   projects    Project[]
   resources   Resource[]
   runs        Run[]
+  secrets     Secret[]
 }
 
 /// A user's connection to an agent provider (Claude Code, OpenCode, ...).
@@ -53,16 +54,22 @@ model Project {
 
   resources ProjectResource[]
   runs      Run[]
+  secrets   Secret[]
+  /// Resources defined for this project only.
+  own       Resource[]
 
   @@unique([userId, path])
   @@index([userId])
 }
 
-/// A resource of the user's library (agent, MCP server, skill or workflow), usable in all their projects.
+/// A user's resource (agent, MCP server, skill or workflow): in their library, usable in all their projects, or in one project only.
 model Resource {
   id               Int      @id @default(autoincrement())
   userId           Int
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Null: in the library. A key is unique across the library and all the user's projects.
+  projectId        Int?
+  project          Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   /// "agent", "mcp", "skill" or "workflow"
   kind             String
   key              String
@@ -74,6 +81,26 @@ model Resource {
   updatedAt        DateTime @updatedAt
 
   @@unique([userId, kind, key])
+}
+
+/// A named secret that MCP servers refer to as `${NAME}` in their env or headers; a project's secret overrides the user's one of the same name.
+model Secret {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Null: the user's, for all their projects.
+  projectId      Int?
+  project        Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String
+  /// Encrypted and bound to its user, project and name.
+  valueEncrypted String
+  /// Last characters of the value, to tell secrets apart.
+  hint           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  /// SQLite treats NULLs as distinct: the service keeps the user's own secrets unique.
+  @@unique([userId, projectId, name])
 }
 
 /// A catalog resource switched on or off in one project; without a row the catalog's enabledByDefault applies.

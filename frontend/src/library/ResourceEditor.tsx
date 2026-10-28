@@ -3,7 +3,7 @@ import { FILE_ACCESS_KEY } from '../agents/labels'
 import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 import {
-  libraryApi,
+  libraryApiFor,
   type AgentSpec,
   type EditableKind,
   type FileAccess,
@@ -73,11 +73,13 @@ interface Props {
   /** Key of the resource to edit; null creates a new one. */
   editing: string | null
   library: Library
+  /** Saves into this project instead of the library. */
+  projectId?: number | null
   onDone: (saved: boolean) => void
 }
 
 /** Form for one library resource; validation errors come from the server. */
-export function ResourceEditor({ kind, editing, library, onDone }: Props) {
+export function ResourceEditor({ kind, editing, library, projectId = null, onDone }: Props) {
   const { t } = useI18n()
   const [key, setKey] = useState(editing ?? '')
   const [spec, setSpec] = useState(() => initialSpec(kind, editing, library))
@@ -91,6 +93,7 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
     e.preventDefault()
     setSaving(true)
     setError(null)
+    const libraryApi = libraryApiFor(projectId)
     try {
       await (editing
         ? libraryApi.update(kind, editing, spec)
@@ -125,14 +128,17 @@ export function ResourceEditor({ kind, editing, library, onDone }: Props) {
           onChange={(e) => patch({ description: e.target.value })}
         />
       </label>
-      <label className="switch">
-        <input
-          type="checkbox"
-          checked={spec.enabledByDefault}
-          onChange={(e) => patch({ enabledByDefault: e.target.checked })}
-        />
-        {t('editor.enabledDefault')}
-      </label>
+      {/* A project's own resource starts on there; elsewhere it doesn't exist. */}
+      {projectId === null && (
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={spec.enabledByDefault}
+            onChange={(e) => patch({ enabledByDefault: e.target.checked })}
+          />
+          {t('editor.enabledDefault')}
+        </label>
+      )}
 
       {kind === 'agent' && (
         <AgentFields
@@ -394,7 +400,7 @@ function McpFields({
       <p className="hint">
         {t('editor.secretsNote')}
         {editing && ` ${t('editor.keepSaved')}`} {t('editor.envLead')}{' '}
-        <code>{'${VARIABLE}'}</code> {t('editor.envTail')}
+        <code>{'${NAME}'}</code> {t('editor.envTail')}
       </p>
     </>
   )

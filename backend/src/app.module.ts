@@ -10,6 +10,7 @@ import { CryptoModule } from './crypto/crypto.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { ProvidersModule } from './providers/providers.module.js';
+import { VaultModule } from './vault/vault.module.js';
 import { WorkflowsModule } from './workflows/workflows.module.js';
 
 @Module({
@@ -21,6 +22,7 @@ import { WorkflowsModule } from './workflows/workflows.module.js';
     ProvidersModule,
     ChatModule,
     ProjectsModule,
+    VaultModule,
     CatalogModule,
     AgentsModule,
     WorkflowsModule,

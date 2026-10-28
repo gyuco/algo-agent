@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FILE_ACCESS_KEY } from '../agents/labels'
 import { useI18n } from '../i18n/useI18n'
-import { libraryApi, type EditableKind, type Library } from './api'
+import { SecretsPanel } from '../vault/SecretsPanel'
+import { libraryApiFor, type EditableKind, type Library } from './api'
 import { ResourceEditor } from './ResourceEditor'
 
 interface Row {
@@ -11,9 +12,21 @@ interface Row {
   details: string[]
 }
 
-/** The user's resource library: agents, MCP servers, skills and workflows usable in every project. */
-export function LibraryPage() {
+interface Props {
+  /** Shows this project's own resources instead of the library. */
+  projectId?: number | null
+  /** Called after a resource is saved or deleted. */
+  onChange?: () => void
+}
+
+/**
+ * The user's resource library: agents, MCP servers, skills and workflows usable
+ * in every project, and their secrets. With a project: the resources of that
+ * project only, inside its workspace.
+ */
+export function LibraryPage({ projectId = null, onChange }: Props) {
   const { t } = useI18n()
+  const libraryApi = useMemo(() => libraryApiFor(projectId), [projectId])
   const [library, setLibrary] = useState<Library | null>(null)
   const [editing, setEditing] = useState<{ kind: EditableKind; key: string | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -24,7 +37,7 @@ export function LibraryPage() {
     libraryApi.get().then(setLibrary, (err: unknown) =>
       setError(err instanceof Error ? err.message : t('library.loadFailed')),
     )
-  }, [t])
+  }, [t, libraryApi])
 
   useEffect(load, [load])
 
@@ -34,6 +47,7 @@ export function LibraryPage() {
     try {
       await libraryApi.remove(kind, key)
       load()
+      onChange?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : t('library.deleteFailed'))
     }
@@ -71,19 +85,27 @@ export function LibraryPage() {
         kind={editing.kind}
         editing={editing.key}
         library={library}
+        projectId={projectId}
         onDone={(saved) => {
           setEditing(null)
-          if (saved) load()
+          if (saved) {
+            load()
+            onChange?.()
+          }
         }}
       />
     )
   }
 
+  /** In a project only its own resources are listed: the library has its page. */
+  const mine = (kind: EditableKind) => (r: { key: string }) =>
+    projectId === null || library.own.includes(`${kind}:${r.key}`)
+
   const sections: [EditableKind, string, Row[]][] = [
     [
       'agent',
       t('kind.agents'),
-      library.agents.map((a) => ({
+      library.agents.filter(mine('agent')).map((a) => ({
         key: a.key,
         description: a.description,
         details: [
@@ -98,7 +120,7 @@ export function LibraryPage() {
     [
       'workflow',
       t('kind.workflows'),
-      library.workflows.map((w) => ({
+      library.workflows.filter(mine('workflow')).map((w) => ({
         key: w.key,
         description: w.description,
         details: [w.steps.map((s) => s.agent).join(' → ')],
@@ -107,7 +129,7 @@ export function LibraryPage() {
     [
       'mcp',
       t('kind.mcps'),
-      library.mcp.map((m) => ({
+      library.mcp.filter(mine('mcp')).map((m) => ({
         key: m.key,
         description: m.description,
         details: [m.type === 'http' ? m.url : `${m.command} ${m.args.join(' ')}`],
@@ -116,19 +138,30 @@ export function LibraryPage() {
     [
       'skill',
       t('kind.skills'),
-      library.skills.map((s) => ({ key: s.key, description: s.description, details: [] })),
+      library.skills
+        .filter(mine('skill'))
+        .map((s) => ({ key: s.key, description: s.description, details: [] })),
     ],
   ]
 
   return (
     <div className="library">
-      <div className="row workspace-head">
-        <h1 className="grow">{t('nav.resources')}</h1>
-        <button type="button" className="secondary" onClick={() => void importExamples()}>
-          {t('library.importExamples')}
-        </button>
-      </div>
-      <p className="hint">{t('library.intro')}</p>
+      {projectId === null ? (
+        <>
+          <div className="row workspace-head">
+            <h1 className="grow">{t('nav.resources')}</h1>
+            <button type="button" className="secondary" onClick={() => void importExamples()}>
+              {t('library.importExamples')}
+            </button>
+          </div>
+          <p className="hint">{t('library.intro')}</p>
+        </>
+      ) : (
+        <>
+          <h2>{t('library.projectTitle')}</h2>
+          <p className="hint">{t('library.projectIntro')}</p>
+        </>
+      )}
       {error && (
         <p className="error" role="alert">
           {error}
@@ -200,18 +233,23 @@ export function LibraryPage() {
         </section>
       ))}
 
-      <section className="card resources">
-        <h2>{t('kind.tools')}</h2>
-        <p className="hint">{t('library.toolsNote')}</p>
-        <ul className="resource-list">
-          {library.tools.map((tool) => (
-            <li key={tool.key}>
-              <strong>{tool.key}</strong>
-              <span className="hint">{tool.description}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {projectId === null && (
+        <>
+          <section className="card resources">
+            <h2>{t('kind.tools')}</h2>
+            <p className="hint">{t('library.toolsNote')}</p>
+            <ul className="resource-list">
+              {library.tools.map((tool) => (
+                <li key={tool.key}>
+                  <strong>{tool.key}</strong>
+                  <span className="hint">{tool.description}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <SecretsPanel projectId={null} />
+        </>
+      )}
     </div>
   )
 }

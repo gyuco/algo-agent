@@ -27,19 +27,22 @@ import { toRateLimitSnapshot } from './rate-limit.js';
 /** Provider id of Claude Code. */
 export const CLAUDE = 'claude';
 
-function mcpConfig(spec: McpSpec): McpServerConfig {
+function mcpConfig(
+  spec: McpSpec,
+  variables: Record<string, string>,
+): McpServerConfig {
   return spec.type === 'stdio'
     ? {
         type: 'stdio',
         command: spec.command,
         args: spec.args,
-        env: interpolate(spec.env, spec.key),
+        env: interpolate(spec.env, spec.key, variables),
         alwaysLoad: true,
       }
     : {
         type: 'http',
         url: spec.url,
-        headers: interpolate(spec.headers, spec.key),
+        headers: interpolate(spec.headers, spec.key, variables),
         alwaysLoad: true,
       };
 }
@@ -125,7 +128,7 @@ export function capabilities(
     });
   }
   for (const key of policy.mcp) {
-    mcpServers[key] = mcpConfig(catalog.mcp.get(key)!);
+    mcpServers[key] = mcpConfig(catalog.mcp.get(key)!, catalog.variables);
   }
   return {
     tools: [...builtinTools(policy), ...(subagents.length ? ['Agent'] : [])],

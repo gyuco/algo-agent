@@ -117,7 +117,7 @@ export class AgentRunnerService {
 
   /** The agent, if it exists and is switched on in the project, with what it may use. */
   async agentFor(userId: number, projectId: number, key: string) {
-    const catalog = await this.catalogService.forUser(userId);
+    const catalog = await this.catalogService.forProject(userId, projectId);
     const agent = catalog.agents.get(key);
     const enabled = await this.resources.isEnabled(projectId, catalog);
     if (!agent || !enabled('agent', key)) {
@@ -148,7 +148,7 @@ export class AgentRunnerService {
     projectId: number,
     provider: AgentProvider,
   ) {
-    const catalog = await this.catalogService.forUser(userId);
+    const catalog = await this.catalogService.forProject(userId, projectId);
     const enabled = await this.resources.isEnabled(projectId, catalog);
     const stdioAllowed = await this.connections.isPersonalOwner(userId);
     const usable = (k: string) =>

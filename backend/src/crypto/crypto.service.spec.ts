@@ -20,6 +20,13 @@ describe('CryptoService', () => {
     ).toThrow();
   });
 
+  it('decrypts only with the context it was encrypted with', () => {
+    const encrypted = service.encrypt('ghp_token', 'secret:1:2:GH');
+    expect(service.decrypt(encrypted, 'secret:1:2:GH')).toBe('ghp_token');
+    expect(() => service.decrypt(encrypted, 'secret:9:2:GH')).toThrow();
+    expect(() => service.decrypt(encrypted)).toThrow();
+  });
+
   it('requires a 32-byte key', () => {
     expect(
       () => new CryptoService(new ConfigService({ ENCRYPTION_KEY: 'abcd' })),

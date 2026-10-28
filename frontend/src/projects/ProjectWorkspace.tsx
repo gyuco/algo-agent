@@ -7,6 +7,8 @@ import { useI18n } from '../i18n/useI18n'
 import type { MessageKey } from '../i18n/messages'
 import { runsApi, type Run } from '../runs/api'
 import type { ActiveRunsState } from '../runs/useActiveRuns'
+import { LibraryPage } from '../library/LibraryPage'
+import { SecretsPanel } from '../vault/SecretsPanel'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
 
@@ -32,6 +34,7 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
+  const [secretNames, setSecretNames] = useState<string[] | null>(null)
   /** '' means a failure without a server message. */
   const [error, setError] = useState<string | null>(null)
 
@@ -129,8 +132,15 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
               />
             </div>
           )}
-          <div className="tab-panel" hidden={tab !== 'resources'}>
-            <ResourcesPanel projectId={project.id} resources={resources} onChange={loadResources} />
+          <div className="tab-panel library" hidden={tab !== 'resources'}>
+            <ResourcesPanel
+              projectId={project.id}
+              resources={resources}
+              secretNames={secretNames}
+              onChange={loadResources}
+            />
+            <LibraryPage projectId={project.id} onChange={loadResources} />
+            <SecretsPanel projectId={project.id} onNames={setSecretNames} />
           </div>
         </>
       )}

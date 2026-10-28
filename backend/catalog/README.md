@@ -33,7 +33,7 @@ confined to the project folder. No agent ever gets a shell.
 description: …
 type: http                  # or stdio
 url: https://…
-headers: { Authorization: "Bearer ${MY_TOKEN}" }   # ${VAR} comes from the backend's environment
+headers: { Authorization: "Bearer ${MY_TOKEN}" }   # ${NAME} is a secret
 ```
 
 ```yaml
@@ -47,6 +47,10 @@ env: { API_KEY: "${SOME_API_KEY}" }
 A stdio server runs as a process on this machine with the backend's privileges: only the app
 owner in personal mode can create one. `app` is reserved for the app tools. Env and header
 values are stored encrypted and never sent back to the browser.
+
+`${NAME}` is filled in when a run starts, from the secrets of the project, then from the
+user's own secrets (Resources and Library pages). Only the app owner in personal mode falls
+back to the backend's environment; for anyone else a URL server could send it elsewhere.
 
 ## skills/`<key>`/SKILL.md
 
