@@ -8,6 +8,7 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { FILE_ACCESS_KEY } from "../agents/labels";
 import type { AgentResource } from "../agents/api";
@@ -66,6 +67,8 @@ const ATTACHMENT_KEY: Record<AttachmentProblem, MessageKey> = {
 
 interface Props {
   projectId: number;
+  /** Project name, shown in the chat card above the conversation. */
+  name: string;
   /** Project folder the agent works in. */
   path: string;
   /** Agents switched on in the project. */
@@ -85,6 +88,8 @@ interface Props {
   agent: string;
   /** Called when the chat switches agent, so the bar's icon follows. */
   onAgentChange: (key: string) => void;
+  /** Actions in the card's heading: agent, history, new conversation, views. */
+  tools?: ReactNode;
 }
 
 /** What the workspace bar can ask of the chat. */
@@ -104,6 +109,7 @@ export interface ChatPanelHandle {
 export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   {
     projectId,
+    name,
     path,
     agents,
     connections,
@@ -114,6 +120,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     onHistoryOpen,
     agent: agentKey,
     onAgentChange,
+    tools,
   },
   ref,
 ) {
@@ -604,6 +611,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
       }}
       onDrop={onDrop}
     >
+      <header className="chat-top">
+        <div className="chat-title">
+          <h1 className="workspace-title" title={name}>
+            {name}
+          </h1>
+          <code className="workspace-path" title={path}>
+            {path}
+          </code>
+        </div>
+        {tools && <div className="chat-tools">{tools}</div>}
+      </header>
+
       {workspaceError && (
         <p className="error" role="alert">
           {workspaceError}

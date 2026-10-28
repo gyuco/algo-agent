@@ -11,7 +11,7 @@ import { LibraryPage } from '../library/LibraryPage'
 import { SecretsPanel } from '../vault/SecretsPanel'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
-import { WorkspaceBar, type WorkspaceView } from './WorkspaceBar'
+import { ViewMenu, WorkspaceBar, type WorkspaceView } from './WorkspaceBar'
 
 interface Props {
   projectId: number
@@ -74,31 +74,68 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
   /** The chosen agent, ignored while it isn't one of the project's. */
   const agentKey = agents.some((a) => a.key === agent) ? agent : ''
 
+  /** The chat's actions, in the card's heading instead of a bar above it. */
+  const chatTools = (
+    <>
+      <AgentMenu
+        agents={agents}
+        value={agentKey}
+        onChange={(key) => chat.current?.selectAgent(key)}
+      />
+      <button
+        type="button"
+        className="icon"
+        aria-label={t('chat.history')}
+        title={t('chat.history')}
+        aria-pressed={history}
+        onClick={() => setHistory((shown) => !shown)}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M12 8v4l3 2" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="icon"
+        aria-label={t('chat.newConversation')}
+        title={t('chat.newConversation')}
+        onClick={() => chat.current?.newConversation()}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+      </button>
+      <ViewMenu view={view} onOpen={openView} />
+    </>
+  )
+
   return (
     <>
-      {project && (
-        <WorkspaceBar name={project.name} path={project.path} view={view} onOpen={openView}>
-          {view === 'chat' && connected && (
-            <>
-              <AgentMenu
-                agents={agents}
-                value={agentKey}
-                onChange={(key) => chat.current?.selectAgent(key)}
-              />
-              <button
-                type="button"
-                className="link"
-                aria-pressed={history}
-                onClick={() => setHistory((shown) => !shown)}
-              >
-                {t('chat.history')}
-              </button>
-              <button type="button" className="link" onClick={() => chat.current?.newConversation()}>
-                {t('chat.newConversation')}
-              </button>
-            </>
-          )}
-        </WorkspaceBar>
+      {project && (view !== 'chat' || !connected) && (
+        <WorkspaceBar name={project.name} path={project.path} view={view} onOpen={openView} />
       )}
       {error !== null && (
         <p className="error" role="alert">
@@ -120,6 +157,7 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
                 ref={chat}
                 key={`${project.id}:${agentsKey}`}
                 projectId={project.id}
+                name={project.name}
                 path={project.path}
                 agents={agents}
                 connections={connections.connected}
@@ -130,6 +168,7 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
                 onHistoryOpen={setHistory}
                 agent={agentKey}
                 onAgentChange={setAgent}
+                tools={chatTools}
               />
             </div>
           )}

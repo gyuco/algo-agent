@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 
@@ -17,39 +17,22 @@ interface Props {
   /** View shown now, marked in the menu. */
   view: WorkspaceView
   onOpen: (view: WorkspaceView) => void
-  /** Actions of the current view, before the menu. */
-  children?: ReactNode
 }
 
 /**
- * The workspace's only header: where the project lives and what it opens.
- * One row, so the chat keeps the height the tabs and the title used to take.
+ * Header of the views that don't show one themselves: where the project lives
+ * and what it opens. The chat keeps its own, inside the card.
  */
-export function WorkspaceBar({ name, path, view, onOpen, children }: Props) {
-  const { t } = useI18n()
+export function WorkspaceBar({ name, path, view, onOpen }: Props) {
   return (
     <div className="workspace-bar">
-      <a className="workspace-back" href="#/" aria-label={t('nav.home')} title={t('nav.home')}>
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M15 5l-7 7 7 7" />
-        </svg>
-      </a>
-      <h1 title={name}>{name}</h1>
+      <h1 className="workspace-title" title={name}>
+        {name}
+      </h1>
       <code className="workspace-path" title={path}>
         {path}
       </code>
       <div className="workspace-actions">
-        {children}
         <ViewMenu view={view} onOpen={onOpen} />
       </div>
     </div>
@@ -57,7 +40,7 @@ export function WorkspaceBar({ name, path, view, onOpen, children }: Props) {
 }
 
 /** Opens the views the tabs used to show: the chat, the workflows, the resources. */
-function ViewMenu({ view, onOpen }: { view: WorkspaceView; onOpen: (view: WorkspaceView) => void }) {
+export function ViewMenu({ view, onOpen }: { view: WorkspaceView; onOpen: (view: WorkspaceView) => void }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)

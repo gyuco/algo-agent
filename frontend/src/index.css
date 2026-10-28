@@ -1075,7 +1075,7 @@ button.icon:hover:not(:disabled) {
   margin-bottom: 0.75rem;
 }
 
-.workspace-bar h1 {
+.workspace-title {
   margin: 0;
   min-width: 0;
   max-width: 40%;
@@ -1083,6 +1083,38 @@ button.icon:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 1.125rem;
+}
+
+/* The project's name and folder, and the chat's actions, at the top of its card. */
+.chat-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem;
+  flex-shrink: 0;
+  min-width: 0;
+  padding: 0 0.25rem;
+}
+
+.chat-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.chat-tools .icon[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--glass-strong);
+  border-color: var(--accent);
 }
 
 .workspace-path {
@@ -1101,33 +1133,6 @@ button.icon:hover:not(:disabled) {
   gap: 0.75rem;
   flex-shrink: 0;
   margin-left: auto;
-}
-
-.workspace-actions .link {
-  font-size: 0.875rem;
-  white-space: nowrap;
-}
-
-.workspace-actions .link[aria-pressed='true'] {
-  color: var(--text-h);
-  font-weight: 600;
-}
-
-.workspace-back {
-  display: inline-grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-input);
-  color: var(--text);
-}
-
-.workspace-back:hover {
-  color: var(--accent);
-  background: var(--glass-strong);
 }
 
 .agent-menu {
@@ -1420,7 +1425,7 @@ button.icon:hover:not(:disabled) {
     display: none;
   }
 
-  .workspace-bar h1 {
+  .workspace-title {
     max-width: none;
   }
 }
