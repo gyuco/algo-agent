@@ -1,15 +1,39 @@
-description: Il revisore analizza il codice (sola lettura), poi l'assistente applica le correzioni.
+description: Il revisore analizza il codice (sola lettura), poi l'assistente corregge finché il revisore non conferma (al massimo 3 volte).
 enabledByDefault: true
 input: Cosa controllare (file, cartella o tema)
 steps:
-  - agent: reviewer
+  - id: review
+    agent: reviewer
     prompt: |
       Review the following part of the project and list concrete problems:
       {{input}}
-  - agent: assistant
+  - id: fix
+    agent: assistant
     prompt: |
       A reviewer found these problems in the project:
 
-      {{previous}}
+      {{steps.review}}
 
       Fix the ones that are clearly correct to fix. Skip anything uncertain and say why.
+
+      What the last check of your fixes said, if there was one:
+
+      {{steps.check}}
+    repeat:
+      with: check
+      until: ok
+      max: 3
+  - id: check
+    agent: reviewer
+    verdict: [ok, problemi]
+    prompt: |
+      A reviewer found these problems in the project:
+
+      {{steps.review}}
+
+      The assistant reports these fixes:
+
+      {{steps.fix}}
+
+      Check in the project that the fixes are correct. Answer "ok" when nothing important is
+      left to fix, "problemi" otherwise, and list what is left.

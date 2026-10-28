@@ -137,12 +137,22 @@ export class RunQueueService implements BeforeApplicationShutdown {
       const now = new Date();
       const { count } = await this.prisma.run.updateMany({
         where: { id: run.id, status: 'queued' },
-        data: { status: 'running', startedAt: now, heartbeatAt: now },
+        // A run back from waiting keeps the time it first started.
+        data: {
+          status: 'running',
+          startedAt: run.startedAt ?? now,
+          heartbeatAt: now,
+        },
       });
       if (!count) continue;
       slots.push(run);
       this.executor.start(
-        { ...run, status: 'running', startedAt: now, heartbeatAt: now },
+        {
+          ...run,
+          status: 'running',
+          startedAt: run.startedAt ?? now,
+          heartbeatAt: now,
+        },
         () => this.wake(),
       );
       this.bus.notify(run.userId, { type: 'changed', runId: run.id });

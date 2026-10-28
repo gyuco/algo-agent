@@ -26,6 +26,13 @@ import { RunsService } from './runs.service.js';
     RunRecoveryService,
     RunsService,
   ],
-  exports: [RunHandlers, RunQueueService, RunFiles, RunsService],
+  exports: [
+    RunEventBus,
+    RunHandlers,
+    RunLog,
+    RunQueueService,
+    RunFiles,
+    RunsService,
+  ],
 })
 export class RunsModule {}

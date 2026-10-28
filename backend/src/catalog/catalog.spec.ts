@@ -20,7 +20,7 @@ describe('readCatalogDir + buildCatalog', () => {
     expect(catalog.skills.get('code-review')?.content).toContain(
       '# Code review',
     );
-    expect(catalog.workflows.get('review-and-fix')?.steps).toHaveLength(2);
+    expect(catalog.workflows.get('review-and-fix')?.steps).toHaveLength(3);
   });
 });
 
@@ -57,6 +57,37 @@ describe('buildCatalog', () => {
           kind: 'workflow',
           key: 'w',
           spec: { description: 'x', steps: [{ agent: 'ghost', prompt: 'hi' }] },
+        },
+      ],
+    ],
+    [
+      'workflows whose steps form a cycle',
+      [
+        agent('a'),
+        {
+          kind: 'workflow',
+          key: 'w',
+          spec: {
+            description: 'x',
+            steps: [
+              { id: 'x', agent: 'a', prompt: 'hi', needs: ['y'] },
+              { id: 'y', agent: 'a', prompt: 'hi', needs: ['x'] },
+            ],
+          },
+        },
+      ],
+    ],
+    [
+      'workflow step ids that are not keys',
+      [
+        agent('a'),
+        {
+          kind: 'workflow',
+          key: 'w',
+          spec: {
+            description: 'x',
+            steps: [{ id: 'Review', agent: 'a', prompt: 'hi' }],
+          },
         },
       ],
     ],

@@ -400,6 +400,154 @@ function McpFields({
   )
 }
 
+type Step = WorkflowSpec['steps'][number]
+
+/** The id a step runs with: its name, or `step-<n>` by position. */
+const stepId = (step: Step, index: number) => step.id ?? `step-${index + 1}`
+
+/**
+ * Step `index` was renamed from `from`: the other steps follow it, in their
+ * prompts and dependencies, unless the new name belongs to another step too.
+ */
+function followRename(steps: Step[], index: number, from: string): Step[] {
+  const to = stepId(steps[index], index)
+  if (from === to || steps.some((s, i) => i !== index && stepId(s, i) === to)) return steps
+  return steps.map((s, i) =>
+    i === index
+      ? s
+      : {
+          ...s,
+          prompt: s.prompt.replaceAll(`{{steps.${from}}}`, `{{steps.${to}}}`),
+          needs: s.needs?.map((n) => (n === from ? to : n)),
+          repeat: s.repeat?.with === from ? { ...s.repeat, with: to } : s.repeat,
+        },
+  )
+}
+
+/** Removes step `index` and drops it from the others' dependencies and repeats. */
+function removeStep(steps: Step[], index: number): Step[] {
+  const id = stepId(steps[index], index)
+  return steps
+    .filter((_, i) => i !== index)
+    .map((s) => ({
+      ...s,
+      needs: s.needs?.filter((n) => n !== id),
+      repeat: s.repeat?.with === id ? undefined : s.repeat,
+    }))
+}
+
+const parseValues = (text: string) =>
+  text
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean)
+
+/** Approval, verdicts and repeat of a step, folded away until used. */
+function StepOptions({
+  step,
+  index,
+  steps,
+  onChange,
+}: {
+  step: Step
+  index: number
+  steps: Step[]
+  onChange: (change: Partial<Step>) => void
+}) {
+  const { t } = useI18n()
+  const values = (step.verdict ?? []).join(', ')
+  // What is typed, while it still says the same as the step: "ok, " keeps its comma.
+  const [draft, setDraft] = useState(values)
+  const shown = parseValues(draft).join(', ') === values ? draft : values
+  const others = steps.map((s, i) => stepId(s, i)).filter((_, i) => i !== index)
+  const repeat = step.repeat
+  const check = repeat && steps.find((s, i) => stepId(s, i) === repeat.with)
+  const setRepeat = (change: Partial<NonNullable<Step['repeat']>>) =>
+    repeat && onChange({ repeat: { ...repeat, ...change } })
+
+  return (
+    <details open={Boolean(step.approval || step.verdict || repeat)}>
+      <summary>{t('editor.advanced')}</summary>
+      <div className="stack">
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={step.approval ?? false}
+            onChange={(e) => onChange({ approval: e.target.checked || undefined })}
+          />
+          {t('editor.stepApproval')}
+        </label>
+        <label>
+          {t('editor.verdict')}
+          <input
+            value={shown}
+            placeholder="ok, problemi"
+            onChange={(e) => {
+              setDraft(e.target.value)
+              const parsed = parseValues(e.target.value)
+              onChange({ verdict: parsed.length ? parsed : undefined })
+            }}
+          />
+        </label>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={Boolean(repeat)}
+            onChange={(e) =>
+              onChange({ repeat: e.target.checked ? { with: others[0] ?? '', until: '', max: 3 } : undefined })
+            }
+          />
+          {t('editor.repeat')}
+        </label>
+        {repeat && (
+          <div className="row">
+            <label>
+              {t('editor.repeatWith')}
+              <select required value={repeat.with} onChange={(e) => setRepeat({ with: e.target.value, until: '' })}>
+                {others.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t('editor.repeatUntil')}
+              <select required value={repeat.until} onChange={(e) => setRepeat({ until: e.target.value })}>
+                <option value="">…</option>
+                {(check?.verdict ?? []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t('editor.repeatMax')}
+              <input
+                type="number"
+                min={1}
+                max={5}
+                required
+                value={repeat.max}
+                onChange={(e) => setRepeat({ max: Number(e.target.value) })}
+              />
+            </label>
+            <select
+              aria-label={t('editor.onMaxFail')}
+              value={repeat.onMax ?? 'fail'}
+              onChange={(e) => setRepeat({ onMax: e.target.value === 'continue' ? 'continue' : undefined })}
+            >
+              <option value="fail">{t('editor.onMaxFail')}</option>
+              <option value="continue">{t('editor.onMaxContinue')}</option>
+            </select>
+          </div>
+        )}
+      </div>
+    </details>
+  )
+}
+
 function WorkflowFields({
   spec,
   library,
@@ -410,11 +558,13 @@ function WorkflowFields({
   onChange: (spec: WorkflowSpec) => void
 }) {
   const { t } = useI18n()
-  const setStep = (index: number, change: Partial<WorkflowSpec['steps'][number]>) =>
+  const setStep = (index: number, change: Partial<Step>) =>
     onChange({
       ...spec,
       steps: spec.steps.map((s, i) => (i === index ? { ...s, ...change } : s)),
     })
+  // References follow a rename once the field is left, not at each keystroke.
+  const [renaming, setRenaming] = useState<string | null>(null)
   return (
     <>
       <label>
@@ -425,12 +575,26 @@ function WorkflowFields({
         <legend>{t('editor.stepsTitle')}</legend>
         <p className="hint">
           {t('editor.promptLead')} <code>{'{{input}}'}</code> {t('editor.inputMeans')}{' '}
-          <code>{'{{previous}}'}</code> {t('editor.previousMeans')}
+          <code>{'{{previous}}'}</code> {t('editor.previousMeans')} <code>{'{{steps.<id>}}'}</code>{' '}
+          {t('editor.stepsMeans')} <code>{'{{iteration}}'}</code> {t('editor.iterationMeans')}
         </p>
         <ol className="run-steps">
           {spec.steps.map((step, i) => (
             <li key={i}>
               <div className="row">
+                <input
+                  aria-label={t('editor.stepName')}
+                  title={t('editor.stepNameHint')}
+                  placeholder={`step-${i + 1}`}
+                  pattern="[a-z0-9][a-z0-9\-]{0,63}"
+                  value={step.id ?? ''}
+                  onFocus={() => setRenaming(stepId(step, i))}
+                  onChange={(e) => setStep(i, { id: e.target.value.trim() || undefined })}
+                  onBlur={() => {
+                    if (renaming !== null) onChange({ ...spec, steps: followRename(spec.steps, i, renaming) })
+                    setRenaming(null)
+                  }}
+                />
                 <select
                   aria-label={t('chat.agentLabel')}
                   required
@@ -448,7 +612,7 @@ function WorkflowFields({
                   type="button"
                   className="link danger"
                   disabled={spec.steps.length === 1}
-                  onClick={() => onChange({ ...spec, steps: spec.steps.filter((_, j) => j !== i) })}
+                  onClick={() => onChange({ ...spec, steps: removeStep(spec.steps, i) })}
                 >
                   {t('editor.remove')}
                 </button>
@@ -460,6 +624,7 @@ function WorkflowFields({
                 value={step.prompt}
                 onChange={(e) => setStep(i, { prompt: e.target.value })}
               />
+              <StepOptions step={step} index={i} steps={spec.steps} onChange={(change) => setStep(i, change)} />
             </li>
           ))}
         </ol>

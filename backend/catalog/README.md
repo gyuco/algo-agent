@@ -59,15 +59,48 @@ shell, so skills should be instructions, not scripts.
 description: …
 enabledByDefault: true
 input: Label of the text the user types
-steps:                      # run in order, each a fresh session of its agent
-  - agent: reviewer
+steps:                      # each a fresh session of its agent
+  - id: review              # optional, default step-<n>
+    agent: reviewer
     prompt: "Review {{input}}"
   - agent: assistant
-    prompt: "Fix these problems: {{previous}}"
+    needs: [review]         # optional, default the step before
+    approval: true          # optional: wait for the user before running it
+    prompt: "Fix these problems: {{steps.review}}"
 ```
 
-`{{input}}` is what the user typed, `{{previous}}` the previous step's answer.
-A run stops at the first step that fails.
+`{{input}}` is what the user typed, `{{steps.<id>}}` the answer of a step the prompt's step
+depends on, directly or indirectly. `{{previous}}` is the answer of the step's only dependency
+(empty with none, refused with more). Without `id` and `needs` the steps form a chain in list
+order, as before. Dependencies may not form a cycle.
+
+A step may declare `verdict: [ok, problemi]`: its prompt then asks the agent to end with a line
+`VERDETTO: <value>`, read ignoring case and markdown, and left out of the step's output. Without
+a valid one the agent is asked once more in the same session; then the step fails.
+
+A step may repeat with a check:
+
+```yaml
+  - id: fix
+    agent: assistant
+    prompt: "Fix {{steps.review}}. Last check: {{steps.check}}"
+    repeat: { with: check, until: ok, max: 3 }   # onMax: fail (default) or continue
+  - id: check                 # must need only fix, and declare verdict
+    agent: reviewer
+    verdict: [ok, problemi]
+    prompt: "Check the fixes: {{steps.fix}}"
+```
+
+Each round runs the step, then its check, each in a fresh session, until the check's verdict is
+`until`. The step sees the last check in `{{steps.check}}` (`(nessuna verifica ancora)` the
+first time) and both see the round in `{{iteration}}`. Steps that need either one start once
+the rounds are over. Out of rounds, the run fails, or with `onMax: continue` goes on with a
+warning.
+
+Steps run one at a time, each after the ones it needs. A step with `approval` waits for the
+user, who sees the prompt it will run; the other steps go on meanwhile, and the run waits once
+nothing else is left. Rejecting the step ends the run. A run stops at the first step that
+fails. See `docs/workflow-a-grafo.md` for the full design.
 
 ## App tools
 

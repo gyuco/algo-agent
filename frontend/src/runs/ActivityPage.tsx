@@ -114,7 +114,7 @@ function ActivityRow({
       ? reasonText(run.reason, t, language)
       : [
           run.activity?.step &&
-            t('activity.step', { n: String(run.activity.step.index + 1), agent: run.activity.step.agent }),
+            t('activity.step', { step: run.activity.step.id, agent: run.activity.step.agent }),
           run.activity?.last,
           run.error,
         ]

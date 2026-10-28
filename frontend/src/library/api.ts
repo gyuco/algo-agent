@@ -26,9 +26,21 @@ export interface SkillSpec extends Base {
   content: string
 }
 
+export interface WorkflowStep {
+  id?: string
+  agent: string
+  prompt: string
+  needs?: string[]
+  approval?: boolean
+  verdict?: string[]
+  /** Runs the step, then the check `with`, until the check says `until`, at most `max` times. */
+  repeat?: { with: string; until: string; max: number; onMax?: 'fail' | 'continue' }
+}
+
 export interface WorkflowSpec extends Base {
   input: string
-  steps: { agent: string; prompt: string }[]
+  /** Without `id` a step is `step-<n>`; without `needs` it follows the step before. */
+  steps: WorkflowStep[]
 }
 
 export interface SpecByKind {

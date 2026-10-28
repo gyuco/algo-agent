@@ -97,8 +97,12 @@ export class RunExecutorService {
 
   private async execute(run: Run, execution: Execution) {
     const { signal } = execution.controller;
-    // A run executes once, so its log starts empty; resumed runs are new runs.
-    let seq = 0;
+    // A run back from waiting goes on with its log; anything else starts it.
+    const last = await this.prisma.runEvent.aggregate({
+      where: { runId: run.id },
+      _max: { seq: true },
+    });
+    let seq = last._max.seq ?? 0;
     let writes = Promise.resolve();
     // Stored first, then published: whatever a client sees live is already in the log.
     const emit = (data: RunEventData) => {
@@ -158,20 +162,27 @@ export class RunExecutorService {
       error =
         status === 'interrupted' ? "Backend spento durante l'esecuzione" : null;
     }
-    if (status === 'done') error = null;
+    if (status === 'done' || status === 'waiting') error = null;
 
-    coalescer.push({ type: 'finished', status });
+    // Waiting isn't an end: clients keep following until it runs again.
+    if (status !== 'waiting') coalescer.push({ type: 'finished', status });
+    else coalescer.flush();
     await writes;
     await this.prisma.run.update({
       where: { id: run.id },
       data: {
         status,
         error,
-        costUsd,
-        finishedAt: new Date(),
+        // A run back from waiting adds to what it spent before.
+        costUsd: { increment: costUsd },
+        finishedAt: status === 'waiting' ? null : new Date(),
         heartbeatAt: null,
       },
     });
+    if (status === 'waiting') {
+      this.bus.notify(run.userId, { type: 'changed', runId: run.id });
+      return;
+    }
     this.bus.end(run.id);
     this.bus.notify(run.userId, { type: 'changed', runId: run.id });
     await this.files.remove(run.id);
@@ -201,8 +212,8 @@ export class RunExecutorService {
   private track(run: Run, event: RunEventData) {
     const current = this.activities.get(run.id) ?? { step: null, last: null };
     let next = current;
-    if (event.type === 'step') {
-      next = { step: { index: event.index, agent: event.agent }, last: null };
+    if (event.type === 'step_started' || event.type === 'iteration_started') {
+      next = { step: { id: event.id, agent: event.agent }, last: null };
     } else {
       const last = describe(event);
       if (last) next = { ...current, last };

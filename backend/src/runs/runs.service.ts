@@ -11,6 +11,7 @@ import { RunExecutorService } from './run-executor.service.js';
 import { RunHandlers } from './run-handlers.js';
 import { RunLog } from './run-log.js';
 import { RunQueueService } from './run-queue.service.js';
+import { listSteps, readSteps } from './run-steps.js';
 import {
   ACTIVE_STATUSES,
   isActive,
@@ -21,14 +22,6 @@ import {
 
 /** Finished runs stay in the activity list this long. */
 const RECENT_MS = 24 * 60 * 60 * 1000;
-
-export interface StepResult {
-  agent: string;
-  output: string;
-  isError: boolean;
-  /** False while the step runs, or when it was stopped halfway. */
-  complete?: boolean;
-}
 
 /** A run as the API returns it. */
 export type RunView = ReturnType<RunsService['view']>;
@@ -75,7 +68,7 @@ export class RunsService {
       ...rest,
       projectName: project?.name ?? null,
       status: run.status as RunStatus,
-      steps: JSON.parse(stepsJson) as StepResult[],
+      steps: listSteps(readSteps(stepsJson)),
       reason: run.status === 'queued' ? this.queue.reason(run.id) : null,
       activity:
         run.status === 'running' ? this.executor.activity(run.id) : null,

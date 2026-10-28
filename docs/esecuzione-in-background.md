@@ -497,11 +497,16 @@ muore quando si chiude la pagina, è già risolto per i workflow.
 [workflow-a-grafo.md](workflow-a-grafo.md) estende i workflow da sequenza a grafo. Gli effetti
 su questo documento:
 
-- lo stato `waiting` (passo in attesa di approvazione) è già nel modello (§4.1) e nel ciclo di
-  vita (§5.2). Un run in attesa non occupa posti di concorrenza e torna in coda quando l'utente
-  approva, anche dalla sezione Attività;
-- l'executor esegue i passi *pronti*, anche in parallelo, invece di quelli in ordine;
+- lo stato `waiting` è già nel modello (§4.1) e nel ciclo di vita (§5.2). Un run è `waiting`
+  solo quando nessun passo è in corso o pronto e almeno uno attende l'approvazione: finché un
+  altro ramo del grafo gira, il run resta `running` con il suo heartbeat. Un run `waiting` non
+  occupa posti di concorrenza e torna in coda quando l'utente approva, anche dalla sezione
+  Attività; l'executor ricostruisce allora lo stato da `stepsJson` e continua lo stesso run;
+- l'approvazione ricontrolla `workflowHash` come la ripresa del §5.6, e risponde 409 se il
+  workflow è cambiato durante l'attesa;
+- l'executor esegue i passi *pronti*, anche in parallelo (`RUNS_MAX_PARALLEL_STEPS`), invece di
+  quelli in ordine. I limiti del §5.4 continuano a contare i run, non i passi;
 - la ripresa del §5.6 riparte da tutti i passi non `done` né `skipped`, non dal "primo passo
-  mancante";
+  mancante", e non usa più `{{previous}}` dell'ultimo passo copiato ma gli output per `id`;
 - il limite `RUNS_MAX_WRITERS_PER_PROJECT` resta. In aggiunta, all'interno di un run solo i
   passi in sola lettura possono girare in parallelo.

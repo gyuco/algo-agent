@@ -2,16 +2,23 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { WorkflowResource } from '../agents/api'
 import { LOCALES } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
-import { isActive, runsApi, type Run, type RunStatus } from '../runs/api'
+import { isActive, runsApi, type Run, type RunStatus, type StepStatus } from '../runs/api'
 import { reasonText } from '../runs/reason'
 import { STATUS_KEY, type ActiveRunsState } from '../runs/useActiveRuns'
 import { workflowsApi, type WorkflowRun } from './api'
 
 interface LiveStep {
+  id: string
   agent: string
+  status: StepStatus
   text: string
   tools: string[]
   error?: string
+  /** While it waits for approval: the prompt it will run and whether it may write files. */
+  approval?: { prompt: string; writes: boolean }
+  /** The step that text and tools go to: the last one started, or a repeat's step or check. */
+  current?: boolean
+  round?: { n: number; max: number }
 }
 
 interface Props {
@@ -56,8 +63,27 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
     [projectId],
   )
 
-  function updateLast(change: (s: LiveStep) => LiveStep) {
-    setSteps((list) => list.map((s, i) => (i === list.length - 1 ? change(s) : s)))
+  /** Text and tools belong to the current step, else to the last one listed. */
+  function updateRunning(change: (s: LiveStep) => LiveStep) {
+    setSteps((list) => {
+      const current = list.findIndex((s) => s.current)
+      const at = current >= 0 ? current : list.length - 1
+      return list.map((s, i) => (i === at ? change(s) : s))
+    })
+  }
+
+  /** Makes step `id` the one text and tools go to. */
+  function makeCurrent(id: string) {
+    setSteps((list) => list.map((s) => (s.current === (s.id === id) ? s : { ...s, current: s.id === id })))
+  }
+
+  /** Changes step `id`, adding it first if it isn't listed yet. */
+  function upsert(id: string, agent: string, change: (s: LiveStep) => LiveStep) {
+    setSteps((list) =>
+      list.some((s) => s.id === id)
+        ? list.map((s) => (s.id === id ? change(s) : s))
+        : [...list, change({ id, agent, status: 'pending', text: '', tools: [] })],
+    )
   }
 
   /** Shows `runId` from its first event; leaving stops following, not the run. */
@@ -74,15 +100,45 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
       try {
         for await (const event of runsApi.follow(runId, abort.signal)) {
           switch (event.type) {
+            case 'step_started':
+              started = true
+              upsert(event.id, event.agent, (s) => ({ ...s, status: 'running', approval: undefined }))
+              makeCurrent(event.id)
+              break
+            case 'iteration_started':
+              upsert(event.id, event.agent, (s) => ({
+                ...s,
+                status: 'running',
+                round: { n: event.iteration, max: event.max },
+                // Rounds after the first follow the previous one's text.
+                text: s.text && `${s.text}\n\n— ${event.iteration}/${event.max} —\n\n`,
+              }))
+              makeCurrent(event.id)
+              break
             case 'step':
               started = true
-              setSteps((list) => [...list, { agent: event.agent, text: '', tools: [] }])
+              setSteps((list) => [
+                ...list,
+                ...list.map((s) => ({ ...s, current: false })),
+                { id: `step-${event.index + 1}`, agent: event.agent, status: 'running', text: '', tools: [], current: true },
+              ])
+              break
+            case 'step_finished':
+              upsert(event.id, '', (s) => ({ ...s, status: event.status }))
+              break
+            case 'approval_requested':
+              started = true
+              upsert(event.id, event.agent, (s) => ({
+                ...s,
+                status: 'waiting_approval',
+                approval: { prompt: event.prompt, writes: event.writes },
+              }))
               break
             case 'text':
-              updateLast((s) => ({ ...s, text: s.text + event.text }))
+              updateRunning((s) => ({ ...s, text: s.text + event.text }))
               break
             case 'tool':
-              updateLast((s) => ({ ...s, tools: [...s.tools, event.name] }))
+              updateRunning((s) => ({ ...s, tools: [...s.tools, event.name] }))
               break
             case 'usage':
               onUsage(event.provider, event.details)
@@ -90,7 +146,7 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
             case 'error':
               // Before any step: the run was refused when it started.
               if (!started) setError(event.message)
-              updateLast((s) => ({ ...s, error: event.message }))
+              updateRunning((s) => ({ ...s, error: event.message }))
               break
             case 'finished':
               setEnded(event.status)
@@ -209,7 +265,23 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
           <ol className="run-steps">
             {steps.map((s, i) => (
               <li key={i}>
-                <strong>{s.agent}</strong>
+                <strong>
+                  {s.id} · {s.agent}
+                </strong>
+                {s.round && <small className="hint"> · {t('workflows.round', { n: String(s.round.n), max: String(s.round.max) })}</small>}
+                {s.status === 'waiting_approval' && s.approval && followed !== null && (
+                  <Approval
+                    approval={s.approval}
+                    busy={running === false}
+                    onApprove={() =>
+                      void act(async () => {
+                        await runsApi.approve(followed, s.id)
+                        upsert(s.id, s.agent, (step) => ({ ...step, status: 'pending', approval: undefined }))
+                      })
+                    }
+                    onReject={(note) => void act(() => runsApi.reject(followed, s.id, note))}
+                  />
+                )}
                 {s.tools.length > 0 && (
                   <ul className="tools">
                     {s.tools.map((tool, j) => (
@@ -255,12 +327,26 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
                 )}
               </div>
               <ol className="run-steps">
-                {r.steps.map((s, i) => (
-                  <li key={i}>
+                {r.steps.map((s) => (
+                  <li key={s.id}>
                     <strong>
-                      {s.agent}
-                      {s.isError && t('workflows.errorSuffix')}
+                      {s.id} · {s.agent}
+                      {s.status === 'failed' && t('workflows.errorSuffix')}
+                      {s.status === 'waiting_approval' && t('workflows.waitingSuffix')}
                     </strong>
+                    {(s.verdict || s.iterations) && (
+                      <small className="hint">
+                        {[
+                          s.verdict && t('workflows.verdict', { value: s.verdict }),
+                          s.iterations && t('workflows.rounds', { n: String(s.iterations.length) }),
+                        ]
+                          .filter(Boolean)
+                          .map((part) => ` · ${part}`)
+                          .join('')}
+                      </small>
+                    )}
+                    {s.warning && <p className="hint">{s.warning}</p>}
+                    {s.note && <p className="hint">{t('workflows.rejectedNote', { note: s.note })}</p>}
                     {s.output && <div className="bubble">{s.output}</div>}
                   </li>
                 ))}
@@ -269,6 +355,43 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
           ))}
         </section>
       )}
+    </div>
+  )
+}
+
+/** What a step waiting for approval will do, and the buttons to let it or stop the run. */
+function Approval({
+  approval,
+  busy,
+  onApprove,
+  onReject,
+}: {
+  approval: { prompt: string; writes: boolean }
+  busy: boolean
+  onApprove: () => void
+  onReject: (note: string) => void
+}) {
+  const { t } = useI18n()
+  const [note, setNote] = useState('')
+  return (
+    <div className="stack">
+      <p className="hint">{t('workflows.approvalTitle')}</p>
+      <div className="bubble">{approval.prompt}</div>
+      <p className="hint">{t(approval.writes ? 'workflows.approvalWrites' : 'workflows.approvalReads')}</p>
+      <input
+        aria-label={t('workflows.rejectNote')}
+        placeholder={t('workflows.rejectNote')}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <div className="row end">
+        <button type="button" className="secondary" disabled={busy} onClick={() => onReject(note)}>
+          {t('workflows.reject')}
+        </button>
+        <button type="button" disabled={busy} onClick={onApprove}>
+          {t('workflows.approve')}
+        </button>
+      </div>
     </div>
   )
 }

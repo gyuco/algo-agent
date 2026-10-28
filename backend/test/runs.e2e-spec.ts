@@ -16,7 +16,8 @@ import type {
 
 /**
  * A provider that answers every turn with "one two three", a word every
- * `delay` ms, and stops when the turn is stopped.
+ * `delay` ms, and stops when the turn is stopped. A prompt with `ECHO<<…>>`
+ * gets what is between the brackets instead, at once.
  */
 function fakeProvider(delay = 60): AgentProvider {
   let sessions = 0;
@@ -42,7 +43,8 @@ function fakeProvider(delay = 60): AgentProvider {
         sessionId: ctx.sessionId ?? `s${++sessions}`,
         model: 'fake-1',
       };
-      for (const word of ['one ', 'two ', 'three']) {
+      const echo = /ECHO<<([\s\S]*?)>>/.exec(ctx.prompt.text);
+      for (const word of echo ? [echo[1]] : ['one ', 'two ', 'three']) {
         await new Promise((r) => setTimeout(r, delay));
         if (ctx.signal.aborted) return;
         yield { type: 'text', text: word };
@@ -73,6 +75,7 @@ function parseEvents(body: string) {
         data: JSON.parse(data) as {
           type: string;
           text?: string;
+          id?: string;
           status?: string;
         },
       };
@@ -256,14 +259,18 @@ describe('Background runs (e2e)', () => {
     await until(async () => (await status(first)) === 'done');
 
     // As if the backend died during the second step.
-    const done = await prisma.run.findUniqueOrThrow({ where: { id: first } });
-    const [kept] = JSON.parse(done.stepsJson) as unknown[];
+    // Saved as a list, like runs from before steps had ids.
     await prisma.run.update({
       where: { id: first },
       data: {
         status: 'interrupted',
         stepsJson: JSON.stringify([
-          kept,
+          {
+            agent: 'writer',
+            output: 'one two three',
+            isError: false,
+            complete: true,
+          },
           { agent: 'writer', output: 'on', isError: false, complete: false },
         ]),
       },
@@ -276,17 +283,23 @@ describe('Background runs (e2e)', () => {
         .expect(202)
     ).body.runId as number;
     const events = parseEvents((await follow(resumed).expect(200)).text);
-    expect(events.filter((e) => e.data.type === 'step').length).toBe(2);
+    expect(
+      events.flatMap((e) =>
+        e.data.type === 'step_started' ? [e.data.id] : [],
+      ),
+    ).toEqual(['step-1', 'step-2']);
     expect(events.at(-1)?.data).toEqual({ type: 'finished', status: 'done' });
     const run = await prisma.run.findUniqueOrThrow({ where: { id: resumed } });
     expect(run.resumeOf).toBe(first);
-    const steps = JSON.parse(run.stepsJson) as {
-      output: string;
-      complete: boolean;
-    }[];
-    expect(steps.map((st) => [st.output, st.complete])).toEqual([
-      ['one two three', true],
-      ['one two three', true],
+    const steps = JSON.parse(run.stepsJson) as Record<
+      string,
+      { output: string; status: string }
+    >;
+    expect(
+      Object.entries(steps).map(([id, st]) => [id, st.output, st.status]),
+    ).toEqual([
+      ['step-1', 'one two three', 'done'],
+      ['step-2', 'one two three', 'done'],
     ]);
 
     // A changed workflow can't be resumed.
@@ -298,6 +311,321 @@ describe('Background runs (e2e)', () => {
       .post(`/api/runs/${first}/resume`)
       .set('Authorization', auth)
       .expect(409);
+  });
+
+  describe('workflow steps that need approval', () => {
+    const start = async () =>
+      (
+        await http()
+          .post(`/api/projects/${projectId}/workflows/gated/runs`)
+          .set('Authorization', auth)
+          .send({ input: 'go' })
+          .expect(202)
+      ).body.runId as number;
+    const steps = async (runId: number) =>
+      (await http().get(`/api/runs/${runId}`).set('Authorization', auth)).body
+        .steps as {
+        id: string;
+        status: string;
+        prompt?: string;
+        note?: string;
+      }[];
+    const stepStatus = async (runId: number, id: string) =>
+      (await steps(runId)).find((st) => st.id === id)?.status;
+    const step = (runId: number, id: string, action: string) =>
+      http()
+        .post(`/api/runs/${runId}/steps/${id}/${action}`)
+        .set('Authorization', auth);
+
+    beforeAll(async () => {
+      const { userId } = await prisma.project.findUniqueOrThrow({
+        where: { id: projectId },
+      });
+      await prisma.resource.createMany({
+        data: [
+          {
+            userId,
+            kind: 'agent',
+            key: 'gatekeeper',
+            specJson: JSON.stringify({
+              description: 'Reads',
+              enabledByDefault: true,
+              permissions: { files: 'read' },
+              prompt: 'Read.',
+            }),
+          },
+          {
+            userId,
+            kind: 'workflow',
+            key: 'gated',
+            specJson: JSON.stringify({
+              description:
+                'A step that needs approval next to one that does not',
+              enabledByDefault: true,
+              steps: [
+                { id: 'free', needs: [], agent: 'gatekeeper', prompt: 'a' },
+                {
+                  id: 'gate',
+                  needs: [],
+                  approval: true,
+                  agent: 'gatekeeper',
+                  prompt: 'b {{input}}',
+                },
+                {
+                  id: 'join',
+                  needs: ['free', 'gate'],
+                  agent: 'gatekeeper',
+                  prompt: '{{steps.free}} {{steps.gate}}',
+                },
+              ],
+            }),
+          },
+        ],
+      });
+    });
+
+    it('takes an approval while other steps run', async () => {
+      const runId = await start();
+      await until(
+        async () => (await stepStatus(runId, 'gate')) === 'waiting_approval',
+      );
+      expect(await status(runId)).toBe('running');
+      await step(runId, 'gate', 'approve').expect(202);
+      await until(async () => (await status(runId)) === 'done');
+      expect((await steps(runId)).map((st) => [st.id, st.status])).toEqual([
+        ['free', 'done'],
+        ['gate', 'done'],
+        ['join', 'done'],
+      ]);
+    });
+
+    it('waits with nothing else to do, then goes on on the same log', async () => {
+      const runId = await start();
+      await until(async () => (await status(runId)) === 'waiting');
+      const gate = (await steps(runId)).find((st) => st.id === 'gate');
+      expect(gate).toMatchObject({
+        status: 'waiting_approval',
+        prompt: 'b go',
+      });
+      await step(runId, 'free', 'approve').expect(409);
+
+      await step(runId, 'gate', 'approve').expect(202);
+      const events = parseEvents((await follow(runId).expect(200)).text);
+      expect(events.map((e) => e.id)).toEqual(events.map((_, i) => i + 1));
+      expect(events.filter((e) => e.data.type === 'finished')).toHaveLength(1);
+      expect(
+        events.flatMap((e) =>
+          e.data.type === 'step_started' ? [e.data.id] : [],
+        ),
+      ).toEqual(['free', 'gate', 'join']);
+      const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
+      expect(run.status).toBe('done');
+      expect(run.costUsd).toBeCloseTo(0.03);
+    });
+
+    it('ends the run when a step is rejected', async () => {
+      const runId = await start();
+      await until(async () => (await status(runId)) === 'waiting');
+      await step(runId, 'gate', 'reject').send({ note: 'not now' }).expect(202);
+      const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
+      expect(run.status).toBe('aborted');
+      expect(run.error).toBe('Passo gate rifiutato: not now');
+      const gate = (await steps(runId)).find((st) => st.id === 'gate');
+      expect(gate).toMatchObject({ status: 'aborted', note: 'not now' });
+    });
+  });
+
+  describe('workflow verdicts and repeats', () => {
+    const start = async (key: string) =>
+      (
+        await http()
+          .post(`/api/projects/${projectId}/workflows/${key}/runs`)
+          .set('Authorization', auth)
+          .send({ input: 'go' })
+          .expect(202)
+      ).body.runId as number;
+    const ended = async (runId: number) => {
+      await until(async () => ['done', 'failed'].includes(await status(runId)));
+      return prisma.run.findUniqueOrThrow({ where: { id: runId } });
+    };
+    type Step = {
+      status: string;
+      output: string;
+      verdict?: string;
+      warning?: string;
+      iterations?: { output: string; check: { output: string } }[];
+    };
+    const stepsOf = (run: { stepsJson: string }) =>
+      JSON.parse(run.stepsJson) as Record<string, Step>;
+    const rounds = (text: string) =>
+      parseEvents(text).flatMap((e) =>
+        e.data.type === 'iteration_started'
+          ? [`${e.data.id}${(e.data as { iteration?: number }).iteration}`]
+          : [],
+      );
+    const fix = (until: string, max: number, onMax?: string) => ({
+      id: 'fix',
+      needs: [],
+      agent: 'looper',
+      prompt: 'ECHO<<fixed {{iteration}} after [{{steps.check}}]>>',
+      repeat: { with: 'check', until, max, ...(onMax ? { onMax } : {}) },
+    });
+    const workflow = (key: string, steps: unknown[]) => ({
+      userId: 0,
+      kind: 'workflow',
+      key,
+      specJson: JSON.stringify({
+        description: key,
+        enabledByDefault: true,
+        steps,
+      }),
+    });
+
+    beforeAll(async () => {
+      const { userId } = await prisma.project.findUniqueOrThrow({
+        where: { id: projectId },
+      });
+      const never = {
+        id: 'check',
+        agent: 'looper',
+        verdict: ['ok', 'again'],
+        prompt: 'ECHO<<still wrong\nVERDETTO: again>>',
+      };
+      await prisma.resource.createMany({
+        data: [
+          {
+            userId,
+            kind: 'agent',
+            key: 'looper',
+            specJson: JSON.stringify({
+              description: 'Loops',
+              enabledByDefault: true,
+              permissions: { files: 'read' },
+              prompt: 'Loop.',
+            }),
+          },
+          workflow('loop', [
+            fix('2', 3),
+            {
+              id: 'check',
+              agent: 'looper',
+              verdict: ['1', '2', '3'],
+              prompt:
+                'ECHO<<checked {{iteration}}\n**VERDETTO: {{iteration}}**>>',
+            },
+            {
+              id: 'after',
+              agent: 'looper',
+              prompt: 'ECHO<<{{steps.fix}}|{{steps.check}}>>',
+            },
+          ]),
+          workflow('stuck', [fix('ok', 2), never]),
+          workflow('stuck-on', [fix('ok', 2, 'continue'), never]),
+          workflow('mute', [
+            { agent: 'looper', verdict: ['ok', 'no'], prompt: 'say nothing' },
+          ]),
+        ].map((w) => ({ ...w, userId })),
+      });
+    });
+
+    it('repeats a step until its check says so', async () => {
+      const runId = await start('loop');
+      const run = await ended(runId);
+      expect(run.status).toBe('done');
+      const steps = stepsOf(run);
+      expect(steps.fix.iterations).toHaveLength(2);
+      expect(steps.check).toMatchObject({
+        status: 'done',
+        output: 'checked 2',
+        verdict: '2',
+      });
+      expect(steps.after.output).toBe('fixed 2 after [checked 1]|checked 2');
+      expect(steps.fix.iterations![0].output).toBe(
+        'fixed 1 after [(nessuna verifica ancora)]',
+      );
+      expect(rounds((await follow(runId).expect(200)).text)).toEqual([
+        'fix1',
+        'check1',
+        'fix2',
+        'check2',
+      ]);
+    });
+
+    it('resumes a repeat from its last full round', async () => {
+      const done = await ended(await start('loop'));
+      const [first] = stepsOf(done).fix.iterations!;
+      await prisma.run.update({
+        where: { id: done.id },
+        data: {
+          status: 'interrupted',
+          stepsJson: JSON.stringify({
+            fix: {
+              agent: 'looper',
+              status: 'running',
+              output: '',
+              costUsd: 0,
+              startedAt: null,
+              finishedAt: null,
+              iterations: [first],
+            },
+          }),
+        },
+      });
+      const resumed = (
+        await http()
+          .post(`/api/runs/${done.id}/resume`)
+          .set('Authorization', auth)
+          .expect(202)
+      ).body.runId as number;
+      const run = await ended(resumed);
+      expect(run.status).toBe('done');
+      expect(rounds((await follow(resumed).expect(200)).text)).toEqual([
+        'fix2',
+        'check2',
+      ]);
+      expect(stepsOf(run).fix.iterations).toHaveLength(2);
+    });
+
+    it('fails a repeat that runs out of rounds', async () => {
+      const run = await ended(await start('stuck'));
+      expect(run.status).toBe('failed');
+      expect(run.error).toBe(
+        'Passo fix: check non ha dato "ok" in 2 iterazioni',
+      );
+      const steps = stepsOf(run);
+      expect([steps.fix.status, steps.check.status]).toEqual([
+        'failed',
+        'done',
+      ]);
+      expect(steps.fix.iterations).toHaveLength(2);
+    });
+
+    it('goes on with a warning when told to', async () => {
+      const run = await ended(await start('stuck-on'));
+      expect(run.status).toBe('done');
+      expect(stepsOf(run).fix.warning).toBe(
+        'check non ha dato "ok" in 2 iterazioni: si prosegue con l\'ultima',
+      );
+    });
+
+    it('fails a step that gives no verdict, after asking again', async () => {
+      const runId = await start('mute');
+      const run = await ended(runId);
+      expect(run.status).toBe('failed');
+      expect(run.error).toBe(
+        'Il passo step-1 non ha dato un verdetto valido (ok, no)',
+      );
+      const sessions = parseEvents(
+        (await follow(runId).expect(200)).text,
+      ).filter((e) => e.data.type === 'session');
+      // Asked again in the same session.
+      const ids = sessions.map(
+        (e) => (e.data as { sessionId?: string }).sessionId,
+      );
+      expect(ids).toHaveLength(2);
+      expect(ids[0]).toBeTruthy();
+      expect(ids[1]).toBe(ids[0]);
+    });
   });
 
   it('takes one turn at a time per conversation', async () => {

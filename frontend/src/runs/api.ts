@@ -18,15 +18,33 @@ export type WaitReason =
 
 /** What a running run is doing: its step and its last action. */
 export interface RunActivity {
-  step: { index: number; agent: string } | null
+  step: { id: string; agent: string } | null
   last: string | null
 }
 
+export type StepStatus = 'pending' | 'waiting_approval' | 'running' | 'done' | 'skipped' | 'failed' | 'aborted'
+
+/** A workflow step of a run; the list is in the order steps started. */
 export interface StepResult {
+  id: string
   agent: string
+  status: StepStatus
   output: string
-  isError: boolean
-  complete?: boolean
+  costUsd: number
+  startedAt: string | null
+  finishedAt: string | null
+  /** Steps that need approval: the prompt as it will run, and whether the agent may write files. */
+  prompt?: string
+  writes?: boolean
+  requestedAt?: string
+  approvedAt?: string
+  /** Why the user rejected it. */
+  note?: string
+  /** The value its answer ended with, for steps that declare verdicts. */
+  verdict?: string
+  /** A step that repeats: each round so far, the step then its check. */
+  iterations?: { output: string; verdict?: string; costUsd: number; check: { output: string; verdict: string; costUsd: number } }[]
+  warning?: string
 }
 
 export interface Run {
@@ -59,6 +77,12 @@ export interface Run {
 
 export type RunEvent =
   | ChatEvent
+  | { type: 'step_started'; id: string; agent: string }
+  | { type: 'step_finished'; id: string; status: StepStatus }
+  | { type: 'approval_requested'; id: string; agent: string; prompt: string; writes: boolean }
+  /** A round of a repeat begins: `id` is the step running this part, the one that repeats or its check. */
+  | { type: 'iteration_started'; id: string; agent: string; iteration: number; max: number }
+  /** Logged by runs from before steps had ids. */
   | { type: 'step'; index: number; agent: string }
   | { type: 'finished'; status: RunStatus }
 
@@ -113,6 +137,13 @@ export const runsApi = {
   abort: (id: number) => api<void>(`/runs/${id}/abort`, { method: 'POST' }),
   resume: (id: number) => api<{ runId: number }>(`/runs/${id}/resume`, { method: 'POST' }),
   seen: (id: number) => api<void>(`/runs/${id}/seen`, { method: 'POST' }),
+  approve: (id: number, stepId: string) =>
+    api<void>(`/runs/${id}/steps/${encodeURIComponent(stepId)}/approve`, { method: 'POST' }),
+  reject: (id: number, stepId: string, note: string) =>
+    api<void>(`/runs/${id}/steps/${encodeURIComponent(stepId)}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(note.trim() ? { note: note.trim() } : {}),
+    }),
 
   /**
    * The run's events from the start (or after `after`), then live ones, until

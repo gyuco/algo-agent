@@ -9,13 +9,15 @@ import { RunConfig } from './run-config.js';
 import { RunExecutorService } from './run-executor.service.js';
 import { RunLog } from './run-log.js';
 import { RunQueueService } from './run-queue.service.js';
+import { readSteps } from './run-steps.js';
 
 const CHECK_MS = 30_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Closes runs whose process is gone: at startup every running one, then any
- * whose heartbeat went stale. Also drops old event logs once a day.
+ * whose heartbeat went stale. Closes runs left waiting for an approval too
+ * long, and drops old event logs once a day.
  */
 @Injectable()
 export class RunRecoveryService
@@ -41,6 +43,7 @@ export class RunRecoveryService
     await this.cleanUp();
     this.timers.push(
       setInterval(() => void this.checkLeases(), CHECK_MS),
+      setInterval(() => void this.expireApprovals(), CHECK_MS),
       setInterval(() => void this.cleanUp(), DAY_MS),
     );
     this.timers.forEach((t) => t.unref());
@@ -59,6 +62,33 @@ export class RunRecoveryService
     ).catch((error: unknown) =>
       this.logger.error(`Lease check failed: ${String(error)}`),
     );
+  }
+
+  /** Waiting runs whose oldest request for approval is past the timeout. */
+  private async expireApprovals() {
+    const timeoutMs = this.config.approvalTimeoutMs();
+    const hours = Math.round(timeoutMs / 3_600_000);
+    try {
+      const runs = await this.prisma.run.findMany({
+        where: { status: 'waiting' },
+        select: { id: true, userId: true, stepsJson: true },
+      });
+      for (const run of runs) {
+        const requested = Object.values(readSteps(run.stepsJson))
+          .filter((s) => s.status === 'waiting_approval' && s.requestedAt)
+          .map((s) => Date.parse(s.requestedAt!));
+        if (!requested.length) continue;
+        if (Date.now() - Math.min(...requested) < timeoutMs) continue;
+        await this.log.close(
+          run,
+          ['waiting'],
+          'aborted',
+          `Nessuna approvazione entro ${hours} ore`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(`Approval check failed: ${String(error)}`);
+    }
   }
 
   private async interrupt(

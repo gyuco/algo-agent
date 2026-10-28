@@ -33,6 +33,11 @@ export class RunConfig {
     return this.int('RUNS_SHUTDOWN_GRACE_MS', 30_000);
   }
 
+  /** A run waiting this long for an approval is closed as aborted. */
+  approvalTimeoutMs() {
+    return this.int('RUNS_APPROVAL_TIMEOUT_HOURS', 72) * 60 * 60 * 1000;
+  }
+
   eventsRetentionDays() {
     return this.int('RUN_EVENTS_RETENTION_DAYS', 14);
   }

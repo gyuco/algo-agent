@@ -4,6 +4,7 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import { APP_SERVER, FILE_ACCESS } from '../agents/policy.js';
 import { APP_TOOLS, type AppTool } from './app-tools.js';
+import { graphErrors, normalizeSteps } from './workflow-graph.js';
 
 export const RESOURCE_KINDS = [
   'agent',
@@ -85,8 +86,32 @@ const workflowSchema = z
     ...base,
     /** Label of the text the user types to start a run. */
     input: z.string().default('Input'),
+    // `id` and `needs` stay optional as written; normalizeSteps fills them in.
     steps: z
-      .array(z.object({ agent: keySchema, prompt: z.string().min(1) }).strict())
+      .array(
+        z
+          .object({
+            id: keySchema.optional(),
+            agent: keySchema,
+            prompt: z.string().min(1),
+            needs: z.array(keySchema).optional(),
+            /** The run stops before the step until the user approves it. */
+            approval: z.boolean().optional(),
+            /** Values the step ends its answer with, as `VERDETTO: <value>`. */
+            verdict: z.array(keySchema).min(2).max(10).optional(),
+            /** Runs the step, then the check `with`, until the check says `until`. */
+            repeat: z
+              .object({
+                with: keySchema,
+                until: keySchema,
+                max: z.number().int().min(1).max(5),
+                onMax: z.enum(['fail', 'continue']).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict(),
+      )
       .min(1)
       .max(10),
   })
@@ -188,6 +213,10 @@ export function buildCatalog(entries: CatalogEntry[]): Catalog {
         `workflow ${workflow.key}: agenti sconosciuti: ${missing.map((s) => s.agent).join(', ')}`,
       );
     }
+    const errors = graphErrors(normalizeSteps(workflow.steps));
+    if (errors.length) {
+      throw new CatalogError(`workflow ${workflow.key}: ${errors.join('; ')}`);
+    }
   }
   return catalog;
 }
@@ -234,7 +263,7 @@ async function subdirs(dir: string): Promise<string[]> {
  *
  *   agents/<key>.md          YAML frontmatter + system prompt
  *   mcp/<key>.yaml           MCP server (stdio or http)
- *   workflows/<key>.yaml     sequence of agent steps
+ *   workflows/<key>.yaml     graph of agent steps
  *   skills/<key>/SKILL.md
  */
 export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
