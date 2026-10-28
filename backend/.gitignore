@@ -13,3 +13,4 @@ dist
 
 # Files of runs in progress, e.g. chat attachments
 /data
+*.tsbuildinfo
