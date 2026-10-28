@@ -17,6 +17,15 @@ import { ProjectsService } from '../projects/projects.service.js';
 import { EDITABLE_KINDS, type EditableKind } from './catalog.js';
 import { CatalogService } from './catalog.service.js';
 
+/** Body of an MCP test: the spec in the editor and, editing, the saved server's key. */
+interface McpTestBody {
+  key?: unknown;
+  spec?: unknown;
+}
+
+const testKey = (body: McpTestBody) =>
+  typeof body.key === 'string' ? body.key : undefined;
+
 function editableKind(kind: string): EditableKind {
   if (!(EDITABLE_KINDS as readonly string[]).includes(kind)) {
     throw new NotFoundException('Tipo di risorsa sconosciuto');
@@ -41,6 +50,12 @@ export class CatalogController {
   @HttpCode(HttpStatus.OK)
   importExamples(@Req() req: AuthenticatedRequest) {
     return this.catalog.importExamples(req.user.sub);
+  }
+
+  @Post('mcp-test')
+  @HttpCode(HttpStatus.OK)
+  testMcp(@Req() req: AuthenticatedRequest, @Body() body: McpTestBody) {
+    return this.catalog.testMcp(req.user.sub, null, testKey(body), body.spec);
   }
 
   @Post(':kind/:key')
@@ -106,6 +121,22 @@ export class ProjectCatalogController {
   ) {
     await this.projects.get(req.user.sub, projectId);
     return this.catalog.library(req.user.sub, projectId);
+  }
+
+  @Post('mcp-test')
+  @HttpCode(HttpStatus.OK)
+  async testMcp(
+    @Req() req: AuthenticatedRequest,
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() body: McpTestBody,
+  ) {
+    await this.projects.get(req.user.sub, projectId);
+    return this.catalog.testMcp(
+      req.user.sub,
+      projectId,
+      testKey(body),
+      body.spec,
+    );
   }
 
   @Post(':kind/:key')

@@ -64,6 +64,9 @@ export interface Library {
   stdioAllowed: boolean
 }
 
+/** Outcome of connecting to an MCP server as a run would. */
+export type McpTestResult = { ok: true; tools: string[] } | { ok: false; error: string }
+
 export type { FileAccess }
 
 /** The library (projectId null), or one project's own resources next to the library. */
@@ -77,6 +80,12 @@ export function libraryApiFor(projectId: number | null) {
     update: <K extends EditableKind>(kind: K, key: string, spec: SpecByKind[K]) =>
       api<null>(path(kind, key), { method: 'PUT', body: JSON.stringify(spec) }),
     remove: (kind: EditableKind, key: string) => api<null>(path(kind, key), { method: 'DELETE' }),
+    /** `key`: the saved server being edited, whose stored secrets fill blank values. */
+    testMcp: (spec: McpSpec, key?: string) =>
+      api<McpTestResult>(`${base}/mcp-test`, {
+        method: 'POST',
+        body: JSON.stringify({ key, spec }),
+      }),
     importExamples: () =>
       api<{ imported: string[] }>('/resources/import-examples', { method: 'POST' }),
   }

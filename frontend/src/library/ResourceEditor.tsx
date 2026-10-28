@@ -9,6 +9,7 @@ import {
   type FileAccess,
   type Library,
   type McpSpec,
+  type McpTestResult,
   type SkillSpec,
   type SpecByKind,
   type WorkflowSpec,
@@ -58,6 +59,12 @@ const toLines = (map: Record<string, string>) =>
   Object.entries(map)
     .map(([k, v]) => `${k}=${v}`)
     .join('\n')
+
+/** Numbers of the lines that aren't blank and aren't `KEY=value`: they would be dropped. */
+const badLines = (text: string) =>
+  text
+    .split('\n')
+    .flatMap((line, i) => (line.trim() && !(line.indexOf('=') > 0) ? [i + 1] : []))
 
 function fromLines(text: string): Record<string, string> {
   const map: Record<string, string> = {}
@@ -150,7 +157,8 @@ export function ResourceEditor({ kind, editing, library, projectId = null, onDon
       {kind === 'mcp' && (
         <McpFields
           spec={spec as McpSpec}
-          editing={editing !== null}
+          editing={editing}
+          projectId={projectId}
           stdioAllowed={library.stdioAllowed}
           onChange={(s) => setSpec(s as SpecByKind[typeof kind])}
         />
@@ -311,11 +319,14 @@ function AgentFields({
 function McpFields({
   spec,
   editing,
+  projectId,
   stdioAllowed,
   onChange,
 }: {
   spec: McpSpec
-  editing: boolean
+  /** Key of the saved server being edited, null for a new one. */
+  editing: string | null
+  projectId: number | null
   stdioAllowed: boolean
   onChange: (spec: McpSpec) => void
 }) {
@@ -323,8 +334,25 @@ function McpFields({
   const { description, enabledByDefault } = spec
   const secrets = spec.type === 'stdio' ? spec.env : spec.headers
   const [secretText, setSecretText] = useState(toLines(secrets))
+  const [testing, setTesting] = useState(false)
+  const [test, setTest] = useState<McpTestResult | null>(null)
+  const invalid = badLines(secretText)
+
+  async function runTest() {
+    setTesting(true)
+    setTest(null)
+    try {
+      setTest(await libraryApiFor(projectId).testMcp(spec, editing ?? undefined))
+    } catch (err) {
+      setTest({ ok: false, error: err instanceof Error ? err.message : t('error.unexpected') })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const setSecrets = (text: string) => {
     setSecretText(text)
+    setTest(null)
     onChange(
       spec.type === 'stdio'
         ? { ...spec, env: fromLines(text) }
@@ -394,14 +422,43 @@ function McpFields({
           rows={3}
           value={secretText}
           placeholder={spec.type === 'stdio' ? 'API_KEY=…' : 'Authorization=Bearer …'}
-          onChange={(e) => setSecrets(e.target.value)}
+          onChange={(e) => {
+            const bad = badLines(e.target.value)
+            e.target.setCustomValidity(bad.length ? t('editor.badLines', { lines: bad.join(', ') }) : '')
+            setSecrets(e.target.value)
+          }}
         />
       </label>
+      {invalid.length > 0 && (
+        <p className="error" role="alert">
+          {t('editor.badLines', { lines: invalid.join(', ') })}
+        </p>
+      )}
       <p className="hint">
         {t('editor.secretsNote')}
-        {editing && ` ${t('editor.keepSaved')}`} {t('editor.envLead')}{' '}
+        {editing !== null && ` ${t('editor.keepSaved')}`} {t('editor.envLead')}{' '}
         <code>{'${NAME}'}</code> {t('editor.envTail')}
       </p>
+      <div className="row">
+        <button
+          type="button"
+          className="secondary"
+          disabled={testing || invalid.length > 0}
+          onClick={runTest}
+        >
+          {t(testing ? 'editor.testing' : 'editor.test')}
+        </button>
+        {test && (
+          <p className={test.ok ? 'hint' : 'error'} role="status">
+            {test.ok
+              ? t('editor.testOk', {
+                  count: String(test.tools.length),
+                  tools: test.tools.join(', ') || '—',
+                })
+              : t('editor.testFailed', { error: test.error })}
+          </p>
+        )}
+      </div>
     </>
   )
 }

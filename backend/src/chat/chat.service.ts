@@ -258,6 +258,8 @@ export class ChatService implements RunHandler, OnModuleInit {
       sessionId: ownRef,
       provider: provider.id,
       messages,
+      /** Model chosen for the latest turn, to offer it again; null: the default one. */
+      model: latest?.model ?? null,
       /** The conversation's latest turn, to follow it or mark it seen. */
       lastRun: latest
         ? { runId: latest.id, status: latest.status, input: latest.input }

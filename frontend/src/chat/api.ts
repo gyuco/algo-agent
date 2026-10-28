@@ -84,6 +84,8 @@ export interface SessionHistory {
   provider: string;
   /** Finished turns only: a turn in progress is in `lastRun`, to follow. */
   messages: HistoryMessage[];
+  /** Model chosen for the latest turn (`<provider>:<model>`); null: the default one. */
+  model: string | null;
   lastRun: { runId: number; status: RunStatus; input: string } | null;
 }
 

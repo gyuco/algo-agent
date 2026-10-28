@@ -111,7 +111,7 @@ function Sidebar({ page }: { page: Page }) {
 function App() {
   const { user, loading, logout } = useAuth()
   const page = usePage()
-  const connections = useConnections()
+  const connections = useConnections(Boolean(user))
   const runs = useActiveRuns(Boolean(user))
   const { t } = useI18n()
 

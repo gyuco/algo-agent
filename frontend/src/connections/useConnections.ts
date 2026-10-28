@@ -4,8 +4,8 @@ import { connectionsApi, type ConnectionStatus } from './api'
 
 export type RunAction = (action: () => Promise<ConnectionStatus | void>) => Promise<void>
 
-/** Every provider's connection, loaded once and updated by the actions run through it. */
-export function useConnections() {
+/** Every provider's connection, loaded once signed in and updated by the actions run through it. */
+export function useConnections(enabled: boolean) {
   const { t } = useI18n()
   const [connections, setConnections] = useState<ConnectionStatus[]>([])
   const [checking, setChecking] = useState(true)
@@ -25,8 +25,14 @@ export function useConnections() {
   )
 
   useEffect(() => {
+    if (!enabled) {
+      setConnections([])
+      setError(null)
+      setChecking(true)
+      return
+    }
     void load()
-  }, [load])
+  }, [enabled, load])
 
   const reload = useCallback(() => {
     setChecking(true)

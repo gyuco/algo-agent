@@ -21,6 +21,7 @@ import {
   type EditableKind,
   type McpSpec,
 } from './catalog.js';
+import { probeMcp } from './mcp-probe.js';
 
 type Secrets = Record<string, string>;
 
@@ -102,13 +103,24 @@ export class CatalogService {
 
   /**
    * The catalog a run in the project uses: `${NAME}` in MCP servers resolve to
-   * the project's secrets, then the user's. Only the app owner in personal mode
-   * falls back to the backend's environment: it's their machine.
+   * the project's secrets, then the user's.
    */
   async forProject(userId: number, projectId: number): Promise<Catalog> {
-    const [catalog, secrets, owner] = await Promise.all([
+    const [catalog, variables] = await Promise.all([
       this.forUser(userId, projectId),
-      this.vault.variables(userId, projectId),
+      this.variables(userId, projectId),
+    ]);
+    return { ...catalog, variables };
+  }
+
+  /**
+   * Values of `${NAME}` in a scope: the project's secrets, then the user's.
+   * Only the app owner in personal mode falls back to the backend's
+   * environment: it's their machine.
+   */
+  private async variables(userId: number, scope: Scope) {
+    const [secrets, owner] = await Promise.all([
+      this.vault.variables(userId, scope),
       this.connections.isPersonalOwner(userId),
     ]);
     const env = owner
@@ -118,7 +130,39 @@ export class CatalogService {
           ),
         )
       : {};
-    return { ...catalog, variables: { ...env, ...secrets } };
+    return { ...env, ...secrets };
+  }
+
+  /**
+   * Connects to an MCP server, saved or not, as a run in the scope would and
+   * lists its tools. Editing `key`, blank secret values are the stored ones.
+   */
+  async testMcp(
+    userId: number,
+    scope: Scope,
+    key: string | undefined,
+    spec: unknown,
+  ) {
+    const current = key
+      ? (await this.allRows(userId)).find(
+          (r) => r.kind === 'mcp' && r.key === key && r.projectId === scope,
+        )
+      : undefined;
+    const entry: CatalogEntry = {
+      kind: 'mcp',
+      key: current?.key ?? 'test',
+      spec: current ? this.keepSecrets(spec, current) : spec,
+    };
+    const server = this.validate([entry]).mcp.get(entry.key)!;
+    if (
+      server.type === 'stdio' &&
+      !(await this.connections.isPersonalOwner(userId))
+    ) {
+      throw new ForbiddenException(
+        "I server MCP stdio eseguono comandi su questa macchina: solo il proprietario dell'app in modalità personale può provarli",
+      );
+    }
+    return probeMcp(server, await this.variables(userId, scope));
   }
 
   /**

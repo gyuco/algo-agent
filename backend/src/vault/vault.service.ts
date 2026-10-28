@@ -76,10 +76,16 @@ export class VaultService {
   /** The values a run in the project sees: the user's secrets, overridden by the project's. */
   async variables(
     userId: number,
-    projectId: number,
+    projectId: number | null,
   ): Promise<Record<string, string>> {
     const rows = await this.prisma.secret.findMany({
-      where: { userId, OR: [{ projectId: null }, { projectId }] },
+      where: {
+        userId,
+        OR: [
+          { projectId: null },
+          ...(projectId === null ? [] : [{ projectId }]),
+        ],
+      },
     });
     // The user's first, so the project's of the same name win.
     rows.sort(

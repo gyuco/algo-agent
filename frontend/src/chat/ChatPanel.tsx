@@ -435,19 +435,28 @@ export function ChatPanel({
    * followed, and continued by the next message. One still without an id is
    * only its first turn.
    */
-  async function openSession(session: Pick<SessionSummary, "sessionId" | "runId">) {
+  async function openSession(
+    session: Pick<SessionSummary, "sessionId" | "runId">,
+  ) {
     if (session.sessionId === null) {
       const run = await runsApi.get(session.runId!);
       stopFollowing();
       setMessages([]);
       setSessionId(run.sessionId ?? undefined);
       setSessionProvider(run.provider ?? undefined);
+      restoreModel(run.model);
       if (isActive(run.status)) {
         showTurn(run.id, run.input);
       } else {
         // Ended before the provider saved anything: only the run knows of it.
         setMessages([
-          { id: nextId.current++, role: "user", text: run.input, tools: [], delegations: [] },
+          {
+            id: nextId.current++,
+            role: "user",
+            text: run.input,
+            tools: [],
+            delegations: [],
+          },
           {
             id: nextId.current++,
             role: "assistant",
@@ -464,10 +473,7 @@ export function ChatPanel({
       setMessages(history.messages.map(fromHistory));
       setSessionId(history.sessionId);
       setSessionProvider(history.provider);
-      const provider = connections.find((c) =>
-        c.models.some((m) => m.value === model),
-      )?.provider;
-      if (provider && provider !== history.provider) setModel("");
+      restoreModel(history.model);
       const last = history.lastRun;
       if (last && isActive(last.status)) showTurn(last.runId, last.input);
       else if (last) markSeen(last.runId);
@@ -505,6 +511,14 @@ export function ChatPanel({
 
   function providerLabel(provider: string) {
     return connections.find((c) => c.provider === provider)?.label ?? provider;
+  }
+
+  /** The model a reopened conversation last used, if still offered; else the default. */
+  function restoreModel(value: string | null) {
+    const offered = connections.some((c) =>
+      c.models.some((m) => m.value === value),
+    );
+    setModel(value && offered ? value : "");
   }
 
   /** A conversation belongs to one provider: a model of another one starts a new conversation. */

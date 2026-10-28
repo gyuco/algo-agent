@@ -402,12 +402,20 @@ export class OpencodeProvider implements AgentProvider {
         return !status || status.status === 'pending';
       });
       if (!pending.length) {
-        for (const s of data) {
-          if (s.status.status !== 'connected') {
-            this.logger.warn(
-              `MCP ${s.name} ${s.status.status}: ${s.status.error ?? ''}`,
-            );
-          }
+        // Without its tools the model wouldn't know the server exists: say why instead.
+        const failed = data.filter(
+          (s) => names.includes(s.name) && s.status.status !== 'connected',
+        );
+        if (failed.length) {
+          throw new OpencodeError(
+            502,
+            failed
+              .map(
+                (s) =>
+                  `server MCP ${s.name.replace(/^mcp-/, '')} non connesso (${s.status.status})${s.status.error ? `: ${s.status.error}` : ''}`,
+              )
+              .join('; '),
+          );
         }
         await new Promise((resolve) => setTimeout(resolve, MCP_SETTLE_MS));
         return;
