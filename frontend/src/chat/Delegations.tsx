@@ -1,5 +1,6 @@
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
+import { MessageText } from "./MessageText";
 
 export interface Tool {
   name: string;
@@ -162,7 +163,7 @@ export function DelegationView({
       </div>
       <div className="message assistant">
         <ToolList tools={delegation.tools} root={root} />
-        {delegation.text && <div className="bubble">{delegation.text}</div>}
+        {delegation.text && <MessageText text={delegation.text} />}
         {delegation.status === "running" && !delegation.text && (
           <div className="bubble typing">{t("chat.thinking")}</div>
         )}

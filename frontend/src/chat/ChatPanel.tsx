@@ -21,6 +21,7 @@ import {
   type SessionSummary,
   type Workspace,
 } from "./api";
+import { MessageText } from "./MessageText";
 import { SearchSelect } from "./SearchSelect";
 import { SessionList } from "./Sessions";
 import {
@@ -673,7 +674,12 @@ export function ChatPanel({
                 {m.attachments && m.attachments.length > 0 && (
                   <AttachmentList attachments={m.attachments} />
                 )}
-                {m.text && <div className="bubble">{m.text}</div>}
+                {m.text &&
+                  (m.role === "assistant" ? (
+                    <MessageText text={m.text} />
+                  ) : (
+                    <div className="bubble">{m.text}</div>
+                  ))}
                 {m.streaming && !m.text && (
                   <div className="bubble typing">
                     {turn?.status === "queued"
