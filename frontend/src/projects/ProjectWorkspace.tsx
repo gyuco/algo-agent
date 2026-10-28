@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AgentMenu } from '../agents/AgentMenu'
 import { resourcesApi, type ProjectResources } from '../agents/api'
 import { ResourcesPanel } from '../agents/ResourcesPanel'
-import { ChatPanel } from '../chat/ChatPanel'
+import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
 import type { ConnectionsState } from '../connections/useConnections'
 import { useI18n } from '../i18n/useI18n'
-import type { MessageKey } from '../i18n/messages'
 import { runsApi, type Run } from '../runs/api'
 import type { ActiveRunsState } from '../runs/useActiveRuns'
 import { LibraryPage } from '../library/LibraryPage'
 import { SecretsPanel } from '../vault/SecretsPanel'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
+import { WorkspaceBar, type WorkspaceView } from './WorkspaceBar'
 
 interface Props {
   projectId: number
@@ -20,23 +21,21 @@ interface Props {
   runs: ActiveRunsState
 }
 
-type Tab = 'chat' | 'workflows' | 'resources'
-
-const TABS: [Tab, MessageKey][] = [
-  ['chat', 'chat.title'],
-  ['workflows', 'workspace.tabWorkflows'],
-  ['resources', 'workspace.tabResources'],
-]
-
 /** One project's workspace: chat, workflows and the agents it has on. Key it by project. */
 export function ProjectWorkspace({ projectId, runId, connections, runs }: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
-  const [tab, setTab] = useState<Tab>('chat')
+  const [view, setView] = useState<WorkspaceView>('chat')
+  /** Past conversations shown in place of the chat, from the workspace bar. */
+  const [history, setHistory] = useState(false)
+  /** Agent the chat uses, '' for the model alone: picked from the bar, the chat follows. */
+  const [agent, setAgent] = useState('')
   const [secretNames, setSecretNames] = useState<string[] | null>(null)
   /** '' means a failure without a server message. */
   const [error, setError] = useState<string | null>(null)
+  /** The chat, for the bar's "new conversation". */
+  const chat = useRef<ChatPanelHandle>(null)
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '')
 
@@ -57,28 +56,50 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
     runsApi.get(runId).then((run) => {
       if (run.projectId !== projectId) return
       setOpened(run)
-      setTab(run.kind === 'chat' ? 'chat' : 'workflows')
+      setView(run.kind === 'chat' ? 'chat' : 'workflows')
     }, fail)
   }, [runId, projectId])
+
+  /** Leaves the conversations list behind when the chat isn't shown. */
+  function openView(next: WorkspaceView) {
+    setView(next)
+    if (next !== 'chat') setHistory(false)
+  }
 
   const connected = connections.connected.length > 0
   const agents = resources?.agents.filter((a) => a.enabled) ?? []
   /** Remounts the chat when the set of agents changes, so it never keeps a disabled one. */
   const agentsKey = agents.map((a) => a.key).join(',')
 
+  /** The chosen agent, ignored while it isn't one of the project's. */
+  const agentKey = agents.some((a) => a.key === agent) ? agent : ''
+
   return (
     <>
-      <div className="workspace-head">
-        <a className="back" href="#/">
-          ← {t('nav.home')}
-        </a>
-        {project && (
-          <>
-            <h1>{project.name}</h1>
-            <code className="hint">{project.path}</code>
-          </>
-        )}
-      </div>
+      {project && (
+        <WorkspaceBar name={project.name} path={project.path} view={view} onOpen={openView}>
+          {view === 'chat' && connected && (
+            <>
+              <AgentMenu
+                agents={agents}
+                value={agentKey}
+                onChange={(key) => chat.current?.selectAgent(key)}
+              />
+              <button
+                type="button"
+                className="link"
+                aria-pressed={history}
+                onClick={() => setHistory((shown) => !shown)}
+              >
+                {t('chat.history')}
+              </button>
+              <button type="button" className="link" onClick={() => chat.current?.newConversation()}>
+                {t('chat.newConversation')}
+              </button>
+            </>
+          )}
+        </WorkspaceBar>
+      )}
       {error !== null && (
         <p className="error" role="alert">
           {error || t('workspace.loadError')}
@@ -87,29 +108,16 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
       {(!project || !resources) && error === null && <p className="hint">{t('projects.loading')}</p>}
       {project && resources && (
         <>
-          <div className="tabs" role="tablist">
-            {TABS.map(([id, labelKey]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                className={tab === id ? 'tab active' : 'tab'}
-                onClick={() => setTab(id)}
-              >
-                {t(labelKey)}
-              </button>
-            ))}
-          </div>
-          {!connected && tab !== 'resources' && !connections.checking && (
+          {!connected && view !== 'resources' && !connections.checking && (
             <p className="hint">
               {t('workspace.connectFirst')} <a href="#/connections">{t('nav.connections')}</a>
             </p>
           )}
-          {/* Panels stay mounted while hidden, so switching tab doesn't stop a running turn. */}
+          {/* Panels stay mounted while hidden, so switching view doesn't stop a running turn. */}
           {connected && (
-            <div className="tab-panel" hidden={tab !== 'chat'}>
+            <div className="view-panel" hidden={view !== 'chat'}>
               <ChatPanel
+                ref={chat}
                 key={`${project.id}:${agentsKey}`}
                 projectId={project.id}
                 path={project.path}
@@ -118,11 +126,15 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
                 onUsage={connections.updateDetails}
                 runs={runs}
                 open={opened?.kind === 'chat' ? opened : null}
+                historyOpen={history}
+                onHistoryOpen={setHistory}
+                agent={agentKey}
+                onAgentChange={setAgent}
               />
             </div>
           )}
           {connected && (
-            <div className="tab-panel" hidden={tab !== 'workflows'}>
+            <div className="view-panel" hidden={view !== 'workflows'}>
               <WorkflowsPanel
                 projectId={project.id}
                 workflows={resources.workflows.filter((w) => w.enabled)}
@@ -132,7 +144,7 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
               />
             </div>
           )}
-          <div className="tab-panel library" hidden={tab !== 'resources'}>
+          <div className="view-panel library" hidden={view !== 'resources'}>
             <ResourcesPanel
               projectId={project.id}
               resources={resources}

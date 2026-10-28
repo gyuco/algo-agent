@@ -1,0 +1,154 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { MessageKey } from '../i18n/messages'
+import { useI18n } from '../i18n/useI18n'
+
+/** What the workspace shows under the bar. */
+export type WorkspaceView = 'chat' | 'workflows' | 'resources'
+
+const VIEWS: [WorkspaceView, MessageKey][] = [
+  ['chat', 'chat.title'],
+  ['workflows', 'workspace.tabWorkflows'],
+  ['resources', 'workspace.tabResources'],
+]
+
+interface Props {
+  name: string
+  path: string
+  /** View shown now, marked in the menu. */
+  view: WorkspaceView
+  onOpen: (view: WorkspaceView) => void
+  /** Actions of the current view, before the menu. */
+  children?: ReactNode
+}
+
+/**
+ * The workspace's only header: where the project lives and what it opens.
+ * One row, so the chat keeps the height the tabs and the title used to take.
+ */
+export function WorkspaceBar({ name, path, view, onOpen, children }: Props) {
+  const { t } = useI18n()
+  return (
+    <div className="workspace-bar">
+      <a className="workspace-back" href="#/" aria-label={t('nav.home')} title={t('nav.home')}>
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M15 5l-7 7 7 7" />
+        </svg>
+      </a>
+      <h1 title={name}>{name}</h1>
+      <code className="workspace-path" title={path}>
+        {path}
+      </code>
+      <div className="workspace-actions">
+        {children}
+        <ViewMenu view={view} onOpen={onOpen} />
+      </div>
+    </div>
+  )
+}
+
+/** Opens the views the tabs used to show: the chat, the workflows, the resources. */
+function ViewMenu({ view, onOpen }: { view: WorkspaceView; onOpen: (view: WorkspaceView) => void }) {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const popover = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        trigger.current?.focus()
+        return
+      }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      const items = popover.current?.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+      if (!items?.length) return
+      e.preventDefault()
+      const list = Array.from(items)
+      const index = list.indexOf(document.activeElement as HTMLElement)
+      const next =
+        e.key === 'ArrowDown'
+          ? (index + 1) % list.length
+          : (index - 1 + list.length) % list.length
+      list[index === -1 ? 0 : next]?.focus()
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (open) popover.current?.querySelector<HTMLElement>('[role="menuitemradio"]')?.focus()
+  }, [open])
+
+  return (
+    <div className="menu" ref={root}>
+      <button
+        ref={trigger}
+        type="button"
+        className="icon"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('workspace.views')}
+        title={t('workspace.views')}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="4" width="18" height="16" rx="2.5" />
+          <path d="M9.5 4v16" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          className="menu-popover below"
+          role="menu"
+          aria-label={t('workspace.views')}
+          ref={popover}
+        >
+          {VIEWS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={view === id}
+              className="menu-item"
+              onClick={() => {
+                setOpen(false)
+                onOpen(id)
+              }}
+            >
+              <span className="text">{t(label)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

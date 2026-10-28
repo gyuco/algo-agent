@@ -18,6 +18,9 @@
   --glass-shadow-hover: 0 18px 44px rgb(73 39 130 / 0.2);
   --glass-card: linear-gradient(135deg, rgb(255 255 255 / 0.64), rgb(255 255 255 / 0.3));
 
+  /* Tick of the chosen item in the menus, drawn as a mask. */
+  --check-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E");
+
   font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
   color-scheme: light dark;
   color: var(--text);
@@ -1062,16 +1065,289 @@ button.icon:hover:not(:disabled) {
   padding: 1rem;
 }
 
-.chat-head {
-  gap: 1rem;
+/* One row for the whole project: name, path, and what the workspace opens. */
+.workspace-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-shrink: 0;
+  min-width: 0;
+  margin-bottom: 0.75rem;
 }
 
-.chat-head .entries {
+.workspace-bar h1 {
+  margin: 0;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.125rem;
+}
+
+.workspace-path {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.8125rem;
+  opacity: 0.7;
+}
+
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.workspace-actions .link {
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.workspace-actions .link[aria-pressed='true'] {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.workspace-back {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-input);
+  color: var(--text);
+}
+
+.workspace-back:hover {
+  color: var(--accent);
+  background: var(--glass-strong);
+}
+
+.agent-menu {
+  position: relative;
+}
+
+.agent-menu.chosen::after {
+  content: '';
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* Menus: a small popover anchored to its trigger. */
+.menu {
+  position: relative;
+  flex: none;
+}
+
+.menu-popover {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  width: 13rem;
+  padding: 0.375rem;
+  background: var(--glass-strong);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow-hover), inset 0 1px 0 var(--glass-highlight);
+}
+
+.menu-popover.below {
+  top: calc(100% + 0.5rem);
+  right: 0;
+}
+
+.menu-popover.above {
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+}
+
+.menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-h);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The tick of the chosen item, always in place so the labels line up. */
+.menu-item::before {
+  content: '';
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.125rem;
+  background: currentColor;
+  -webkit-mask: var(--check-icon) center / contain no-repeat;
+  mask: var(--check-icon) center / contain no-repeat;
+  opacity: 0;
+}
+
+.menu-item[aria-checked='true']::before {
+  opacity: 1;
+}
+
+.menu-item.submenu::before {
+  display: none;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--glass-input);
+  outline: none;
+}
+
+.menu-item[aria-checked='true'] {
+  color: var(--accent);
+}
+
+.menu-item .text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.menu-item .desc {
+  font-size: 0.75rem;
+  color: var(--text);
+  opacity: 0.8;
+}
+
+.menu-item .trail {
+  margin-left: auto;
+  align-self: center;
+  flex: none;
+  opacity: 0.6;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 0.25rem 0.375rem;
+  background: var(--glass-line);
+}
+
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-height: 17rem;
+  overflow-y: auto;
+}
+
+.menu-empty {
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+}
+
+.menu-popover.agents {
+  width: 16rem;
+}
+
+/* The reasoning levels: a panel beside the models, stacked on narrow screens. */
+.menu-popover.sub {
+  left: calc(100% + 0.375rem);
+  bottom: -0.375rem;
+  width: 16rem;
+}
+
+/* Model pill: the model and its reasoning level, opening the two menus. */
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: min(24rem, 60vw);
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass-input);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--text-h);
+  font-size: 0.875rem;
+}
+
+.model-pill:hover:not(:disabled) {
+  background: var(--glass-strong);
+}
+
+.model-pill:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.model-pill .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-pill .level {
+  flex: none;
+  color: var(--text);
+}
+
+.model-pill .level::before {
+  content: '·';
+  margin-right: 0.375rem;
+}
+
+.model-pill svg {
+  flex: none;
+  opacity: 0.6;
+  transition: transform 0.15s ease;
+}
+
+.model-pill[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.model-popover {
+  width: min(22rem, calc(100vw - 2rem));
+}
+
+.model-search {
+  width: 100%;
+  margin-bottom: 0.25rem;
+  padding: 0.4rem 0.625rem;
+  font-size: 0.875rem;
+}
+
+@media (max-width: 720px) {
+  .menu-popover.sub {
+    position: static;
+    width: auto;
+    margin: 0.125rem 0 0 0.375rem;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 .layout.fill .messages {
@@ -1138,6 +1414,14 @@ button.icon:hover:not(:disabled) {
 
   .composer .row small {
     display: none;
+  }
+
+  .workspace-path {
+    display: none;
+  }
+
+  .workspace-bar h1 {
+    max-width: none;
   }
 }
 
@@ -1231,48 +1515,19 @@ button.icon:hover:not(:disabled) {
   right: 0.125rem;
 }
 
-.tabs {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 1rem;
-  border-bottom: 1px solid var(--glass-border);
-}
-
-button.tab {
-  margin-bottom: -1px;
-  border: 1px solid transparent;
-  border-radius: 10px 10px 0 0;
-  background: none;
-  color: var(--text);
-}
-
-button.tab:hover {
-  background: var(--glass-input);
-}
-
-button.tab.active {
-  border-color: var(--glass-border);
-  border-bottom-color: transparent;
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  color: var(--text-h);
-  font-weight: 600;
-}
-
-.tab-panel {
+.view-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
 }
 
-.layout.fill .tab-panel:has(.card.chat) {
+.layout.fill .view-panel:has(.card.chat) {
   flex: 1;
   overflow: hidden;
 }
 
-.tab-panel[hidden] {
+.view-panel[hidden] {
   display: none;
 }
 
@@ -1676,120 +1931,6 @@ a.button.secondary {
 .activity-detail {
   color: var(--text);
   overflow-wrap: anywhere;
-}
-
-.search-select {
-  position: relative;
-  min-width: 0;
-}
-
-.search-select-trigger {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  max-width: 22rem;
-  font: inherit;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--glass-line);
-  border-radius: 10px;
-  background: var(--glass-input);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: var(--text-h);
-  cursor: pointer;
-  text-align: left;
-}
-
-.search-select-trigger span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.search-select-trigger::after {
-  content: '';
-  flex: none;
-  width: 0.4rem;
-  height: 0.4rem;
-  margin-left: auto;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: translateY(-2px) rotate(45deg);
-}
-
-.search-select-trigger:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.search-select-trigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.search-select-popover {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  width: max(100%, 18rem);
-  max-width: min(28rem, calc(100vw - 2rem));
-  display: flex;
-  flex-direction: column;
-  background: var(--glass-strong);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  box-shadow: var(--glass-shadow-hover), inset 0 1px 0 var(--glass-highlight);
-  overflow: hidden;
-}
-
-.search-select-popover input {
-  font: inherit;
-  padding: 0.5rem 0.75rem;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-h);
-  outline: none;
-}
-
-.search-select-popover ul {
-  list-style: none;
-  margin: 0;
-  padding: 0.25rem;
-  max-height: 18rem;
-  overflow-y: auto;
-}
-
-.search-select-group {
-  padding: 0.5rem 0.5rem 0.25rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text);
-}
-
-.search-select [role='option'] {
-  padding: 0.375rem 0.5rem;
-  border-radius: 6px;
-  color: var(--text-h);
-  cursor: pointer;
-}
-
-.search-select [role='option'].active {
-  background: var(--bg);
-}
-
-.search-select [role='option'][aria-selected='true'] {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.search-select-empty {
-  padding: 0.5rem;
-  color: var(--text);
 }
 
 .tools.permissions li.missing {

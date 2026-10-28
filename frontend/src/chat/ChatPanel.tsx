@@ -1,5 +1,7 @@
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ClipboardEvent,
@@ -22,7 +24,7 @@ import {
   type Workspace,
 } from "./api";
 import { MessageText } from "./MessageText";
-import { SearchSelect } from "./SearchSelect";
+import { ModelMenu } from "./ModelMenu";
 import { SessionList } from "./Sessions";
 import {
   AgentTrail,
@@ -76,6 +78,21 @@ interface Props {
   runs: ActiveRunsState;
   /** Chat run to show, from a link: its conversation, or the turn alone while it has none. */
   open: Run | null;
+  /** Past conversations shown in place of the chat: the workspace bar owns the switch. */
+  historyOpen: boolean;
+  onHistoryOpen: (open: boolean) => void;
+  /** Agent the chat delegates to, '' to chat with the model; picked from the workspace bar. */
+  agent: string;
+  /** Called when the chat switches agent, so the bar's icon follows. */
+  onAgentChange: (key: string) => void;
+}
+
+/** What the workspace bar can ask of the chat. */
+export interface ChatPanelHandle {
+  /** Starts an empty conversation; the current one stays in the history. */
+  newConversation: () => void;
+  /** Switches the agent the next message goes to. */
+  selectAgent: (key: string) => void;
 }
 
 /**
@@ -84,15 +101,22 @@ interface Props {
  * switching conversation or leaving only stops following it, and opening the
  * conversation again picks it up. Remount it (key) to switch folders.
  */
-export function ChatPanel({
-  projectId,
-  path,
-  agents,
-  connections,
-  onUsage,
-  runs,
-  open,
-}: Props) {
+export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
+  {
+    projectId,
+    path,
+    agents,
+    connections,
+    onUsage,
+    runs,
+    open,
+    historyOpen,
+    onHistoryOpen,
+    agent: agentKey,
+    onAgentChange,
+  },
+  ref,
+) {
   const { t, language } = useI18n();
   const { markSeen } = runs;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -101,8 +125,6 @@ export function ChatPanel({
   /** '' leaves the effort to the model. */
   const [effort, setEffort] = useState("");
   const efforts = effortsOf(model);
-  /** '' chats with the model directly. */
-  const [agentKey, setAgentKey] = useState("");
   const agent = agents.find((a) => a.key === agentKey);
   /** Delegation shown in place of the main thread; null shows the main thread. */
   const [focus, setFocus] = useState<string | null>(null);
@@ -116,7 +138,7 @@ export function ChatPanel({
   /** Provider the conversation runs on: it can't move to another one. */
   const [sessionProvider, setSessionProvider] = useState<string | undefined>();
   /** Past conversations shown in place of the chat. */
-  const [showSessions, setShowSessions] = useState(false);
+  const showSessions = historyOpen;
   const [streaming, setStreaming] = useState(false);
   /** Run of the turn being followed. */
   const [turnRun, setTurnRun] = useState<number | null>(null);
@@ -435,6 +457,18 @@ export function ChatPanel({
     setFocus(null);
   }
 
+  // The workspace bar starts a new conversation, and doesn't reopen the history.
+  useImperativeHandle(ref, () => ({
+    newConversation() {
+      newConversation();
+      onHistoryOpen(false);
+    },
+    selectAgent(key: string) {
+      switchAgent(key);
+      onHistoryOpen(false);
+    },
+  }));
+
   /**
    * A conversation as the chat's own: shown, with its turn in progress
    * followed, and continued by the next message. One still without an id is
@@ -484,7 +518,7 @@ export function ChatPanel({
       else if (last) markSeen(last.runId);
     }
     setFocus(null);
-    setShowSessions(false);
+    onHistoryOpen(false);
     stickRef.current = true;
   }
 
@@ -537,6 +571,7 @@ export function ChatPanel({
 
   /** A conversation belongs to one provider: a model of another one starts a new conversation. */
   function chooseModel(value: string) {
+    if (value === model) return;
     const provider = connections.find((c) =>
       c.models.some((m) => m.value === value),
     )?.provider;
@@ -549,7 +584,8 @@ export function ChatPanel({
 
   /** A conversation belongs to one agent (or none): switching starts a new one. */
   function switchAgent(key: string) {
-    setAgentKey(key);
+    if (key === agentKey) return;
+    onAgentChange(key);
     newConversation();
   }
 
@@ -568,44 +604,6 @@ export function ChatPanel({
       }}
       onDrop={onDrop}
     >
-      <div className="chat-head">
-        <h2>{t("chat.title")}</h2>
-        {workspace && workspace.entries.length > 0 && (
-          <small
-            className="entries"
-            title={workspace.entries.map((e) => e.name).join(", ")}
-          >
-            {workspace.entries
-              .slice(0, 6)
-              .map((e) => (e.dir ? `${e.name}/` : e.name))
-              .join(", ")}
-            {workspace.entries.length > 6 && ", …"}
-          </small>
-        )}
-        {workspace && (
-          <button
-            type="button"
-            className="link"
-            aria-pressed={showSessions}
-            onClick={() => setShowSessions((shown) => !shown)}
-          >
-            {t("chat.history")}
-          </button>
-        )}
-        {sessionId && (
-          <button
-            type="button"
-            className="link"
-            onClick={() => {
-              newConversation();
-              setShowSessions(false);
-            }}
-          >
-            {t("chat.newConversation")}
-          </button>
-        )}
-      </div>
-
       {workspaceError && (
         <p className="error" role="alert">
           {workspaceError}
@@ -621,7 +619,7 @@ export function ChatPanel({
                 current={sessionId}
                 providerLabel={providerLabel}
                 onOpen={openSession}
-                onBack={() => setShowSessions(false)}
+                onBack={() => onHistoryOpen(false)}
               />
             </div>
           )}
@@ -794,61 +792,26 @@ export function ChatPanel({
               )}
             </div>
             <div className="row">
-              <SearchSelect
-                ariaLabel={t("chat.agentLabel")}
-                value={agentKey}
-                disabled={streaming}
-                onChange={switchAgent}
-                searchPlaceholder={t("chat.searchOptions")}
-                emptyText={t("chat.noMatches")}
-                options={[
-                  { value: "", label: t("chat.directOption") },
-                  ...agents.map((a) => ({
-                    value: a.key,
-                    label: `${a.key} · ${t(FILE_ACCESS_KEY[a.effective.files])}`,
+              <ModelMenu
+                models={connections.flatMap((c) =>
+                  c.models.map((m) => ({
+                    value: m.value,
+                    label: m.displayName,
+                    group: c.label,
                   })),
-                ]}
-              />
-              <SearchSelect
-                ariaLabel={t("chat.modelLabel")}
-                value={model}
+                )}
+                defaultLabel={
+                  agent?.model
+                    ? t("chat.agentModel", { model: agent.model })
+                    : t("chat.defaultModel")
+                }
+                model={model}
+                efforts={efforts}
+                effort={effort}
                 disabled={streaming}
-                onChange={chooseModel}
-                searchPlaceholder={t("chat.searchOptions")}
-                emptyText={t("chat.noMatches")}
-                options={[
-                  {
-                    value: "",
-                    label: agent?.model
-                      ? t("chat.agentModel", { model: agent.model })
-                      : t("chat.defaultModel"),
-                  },
-                  ...connections.flatMap((c) =>
-                    c.models.map((m) => ({
-                      value: m.value,
-                      label: m.displayName,
-                      group: c.label,
-                    })),
-                  ),
-                ]}
+                onModel={chooseModel}
+                onEffort={setEffort}
               />
-              {efforts.length > 0 && (
-                <SearchSelect
-                  ariaLabel={t("chat.effortLabel")}
-                  value={effort}
-                  disabled={streaming}
-                  onChange={setEffort}
-                  searchPlaceholder={t("chat.searchOptions")}
-                  emptyText={t("chat.noMatches")}
-                  options={[
-                    { value: "", label: t("chat.defaultEffort") },
-                    ...efforts.map((e) => ({
-                      value: e,
-                      label: t("chat.effortOption", { effort: e }),
-                    })),
-                  ]}
-                />
-              )}
               <small>{t("chat.hint")}</small>
             </div>
           </form>
@@ -856,7 +819,7 @@ export function ChatPanel({
       )}
     </section>
   );
-}
+});
 
 function AttachmentList({
   attachments,
