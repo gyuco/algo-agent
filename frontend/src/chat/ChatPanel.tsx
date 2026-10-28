@@ -98,6 +98,9 @@ export function ChatPanel({
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [model, setModel] = useState("");
+  /** '' leaves the effort to the model. */
+  const [effort, setEffort] = useState("");
+  const efforts = effortsOf(model);
   /** '' chats with the model directly. */
   const [agentKey, setAgentKey] = useState("");
   const agent = agents.find((a) => a.key === agentKey);
@@ -261,6 +264,7 @@ export function ChatPanel({
         attachments: files.length ? files : undefined,
         sessionId,
         model: model || undefined,
+        effort: efforts.includes(effort) ? effort : undefined,
       });
       void followTurn(runId, replyId);
     } catch (err) {
@@ -445,7 +449,7 @@ export function ChatPanel({
       setMessages([]);
       setSessionId(run.sessionId ?? undefined);
       setSessionProvider(run.provider ?? undefined);
-      restoreModel(run.model);
+      restoreModel(run.model, run.effort);
       if (isActive(run.status)) {
         showTurn(run.id, run.input);
       } else {
@@ -474,7 +478,7 @@ export function ChatPanel({
       setMessages(history.messages.map(fromHistory));
       setSessionId(history.sessionId);
       setSessionProvider(history.provider);
-      restoreModel(history.model);
+      restoreModel(history.model, history.effort);
       const last = history.lastRun;
       if (last && isActive(last.status)) showTurn(last.runId, last.input);
       else if (last) markSeen(last.runId);
@@ -514,12 +518,21 @@ export function ChatPanel({
     return connections.find((c) => c.provider === provider)?.label ?? provider;
   }
 
-  /** The model a reopened conversation last used, if still offered; else the default. */
-  function restoreModel(value: string | null) {
+  /** Effort levels `value` accepts; none for the default model, whose own aren't known. */
+  function effortsOf(value: string) {
+    return (
+      connections.flatMap((c) => c.models).find((m) => m.value === value)
+        ?.efforts ?? []
+    );
+  }
+
+  /** The model and effort a reopened conversation last used, if still offered; else the defaults. */
+  function restoreModel(value: string | null, level: string | null) {
     const offered = connections.some((c) =>
       c.models.some((m) => m.value === value),
     );
     setModel(value && offered ? value : "");
+    setEffort(value && level && effortsOf(value).includes(level) ? level : "");
   }
 
   /** A conversation belongs to one provider: a model of another one starts a new conversation. */
@@ -530,6 +543,8 @@ export function ChatPanel({
     if (sessionProvider && provider && provider !== sessionProvider)
       newConversation();
     setModel(value);
+    // Kept when the new model accepts it too.
+    if (!effortsOf(value).includes(effort)) setEffort("");
   }
 
   /** A conversation belongs to one agent (or none): switching starts a new one. */
@@ -817,6 +832,23 @@ export function ChatPanel({
                   ),
                 ]}
               />
+              {efforts.length > 0 && (
+                <SearchSelect
+                  ariaLabel={t("chat.effortLabel")}
+                  value={effort}
+                  disabled={streaming}
+                  onChange={setEffort}
+                  searchPlaceholder={t("chat.searchOptions")}
+                  emptyText={t("chat.noMatches")}
+                  options={[
+                    { value: "", label: t("chat.defaultEffort") },
+                    ...efforts.map((e) => ({
+                      value: e,
+                      label: t("chat.effortOption", { effort: e }),
+                    })),
+                  ]}
+                />
+              )}
               <small>{t("chat.hint")}</small>
             </div>
           </form>

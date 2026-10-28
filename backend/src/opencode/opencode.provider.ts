@@ -81,6 +81,8 @@ interface ModelInfo {
   providerID: string;
   name: string;
   enabled: boolean;
+  /** Settings the model can run with, e.g. reasoning effort levels. */
+  variants: { id: string }[];
 }
 
 interface SessionInfo {
@@ -433,7 +435,10 @@ export class OpencodeProvider implements AgentProvider {
     server: OpencodeServer,
     ctx: RunContext,
   ): Promise<SessionInfo> {
-    const model = ctx.model ? modelRef(ctx.model) : undefined;
+    // OpenCode's effort levels are variants of the model.
+    const model = ctx.model
+      ? { ...modelRef(ctx.model), ...(ctx.effort && { variant: ctx.effort }) }
+      : undefined;
     if (!ctx.sessionId) {
       const created = await server.request<{ data: SessionInfo }>(
         'POST',
@@ -529,6 +534,7 @@ export class OpencodeProvider implements AgentProvider {
           .map((m) => ({
             value: modelValue(m),
             displayName: `${m.name} · ${m.providerID}`,
+            efforts: (m.variants ?? []).map((v) => v.id),
           })),
       };
     });

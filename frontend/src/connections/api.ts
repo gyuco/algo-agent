@@ -4,6 +4,8 @@ export interface ModelOption {
   /** Opaque reference: send it back as the chat's model. */
   value: string
   displayName: string
+  /** Effort levels the model accepts, lowest first; none when it has no such choice. */
+  efforts: string[]
 }
 
 /** One provider's connection, as every provider reports it. */

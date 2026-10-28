@@ -1,6 +1,7 @@
 import {
   listSessions,
   query,
+  type EffortLevel,
   type Options,
 } from '@anthropic-ai/claude-agent-sdk';
 import Anthropic from '@anthropic-ai/sdk';
@@ -20,6 +21,7 @@ import { ConnectionsService } from '../connections/connections.service.js';
 import type {
   AgentProvider,
   ChatEvent,
+  ModelOption,
   ProviderStatus,
   RunContext,
   SessionSummary,
@@ -63,7 +65,7 @@ interface RuntimeCheck {
   ok: boolean;
   error?: string;
   claudeCodeVersion?: string;
-  models?: { value: string; displayName: string }[];
+  models?: ModelOption[];
 }
 
 interface ProbeResult {
@@ -288,6 +290,7 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
         cwd: ctx.cwd,
         env,
         model: ctx.model,
+        effort: ctx.effort as EffortLevel | undefined,
         resume: ctx.sessionId,
         ...capabilities(
           ctx.catalog,
@@ -526,9 +529,10 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
       return {
         ok: true,
         claudeCodeVersion: init.claude_code_version,
-        models: init.models.map(({ value, displayName }) => ({
-          value,
-          displayName,
+        models: init.models.map((m) => ({
+          value: m.value,
+          displayName: m.displayName,
+          efforts: (m.supportsEffort && m.supportedEffortLevels) || [],
         })),
       };
     } catch (error) {

@@ -31,6 +31,8 @@ export interface RunRequest {
   sessionId?: string;
   /** Overrides the agent's model: `<provider>:<model>`. */
   model?: string;
+  /** One of the chosen model's effort levels. */
+  effort?: string;
   signal: AbortSignal;
 }
 
@@ -248,6 +250,7 @@ export class AgentRunnerService {
         systemPrompt: systemPrompt(agent, policy),
         prompt: req.prompt,
         model,
+        effort: req.effort,
         sessionId,
         subagents: subagents.map((s) => ({
           ...s,

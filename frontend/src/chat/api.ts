@@ -42,6 +42,8 @@ export interface SendMessage {
   attachments?: Attachment[];
   sessionId?: string;
   model?: string;
+  /** One of the model's `efforts`; the model's default when omitted. */
+  effort?: string;
 }
 
 /** A conversation of the project, with its turn in progress if any. */
@@ -52,7 +54,11 @@ export interface SessionSummary {
   title: string;
   updatedAt: string;
   runId: number | null;
-  activeRun: { runId: number; status: RunStatus; reason: WaitReason | null } | null;
+  activeRun: {
+    runId: number;
+    status: RunStatus;
+    reason: WaitReason | null;
+  } | null;
   /** Its last answer arrived after the user last looked. */
   unread: boolean;
 }
@@ -86,6 +92,8 @@ export interface SessionHistory {
   messages: HistoryMessage[];
   /** Model chosen for the latest turn (`<provider>:<model>`); null: the default one. */
   model: string | null;
+  /** Effort chosen for the latest turn; null: the model's default. */
+  effort: string | null;
   lastRun: { runId: number; status: RunStatus; input: string } | null;
 }
 

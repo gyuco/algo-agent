@@ -63,6 +63,8 @@ export interface RunContext {
   prompt: UserTurn;
   /** Model id within the provider; the provider's default when omitted. */
   model?: string;
+  /** One of the model's effort levels; the model's default when omitted. */
+  effort?: string;
   /** The provider's own id of the session to continue. */
   sessionId?: string;
   /** Agents the main thread may delegate to; empty unless the provider supports it. */
@@ -108,6 +110,8 @@ export interface HistoryMessage {
 export interface ModelOption {
   value: string;
   displayName: string;
+  /** Effort levels the model accepts, lowest first; none when it has no such choice. */
+  efforts: string[];
 }
 
 /** A provider's view of one user's connection. */

@@ -60,6 +60,7 @@ export interface Run {
   sessionId: string | null
   agent: string | null
   model: string | null
+  effort: string | null
   provider: string | null
   writes: boolean
   steps: StepResult[]

@@ -144,6 +144,8 @@ model Run {
   agent        String?
   /// Chat only: `<provider>:<model>` chosen for the turn.
   model        String?
+  /// Chat only: effort level chosen for the turn, among the model's; null: the model's default.
+  effort       String?
   /// Provider expected to run it, to hold it back while that provider's limit is reached.
   provider     String?
   /// Whether some agent of the run may write files in the project folder.

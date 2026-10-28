@@ -104,6 +104,7 @@ export class ChatService implements RunHandler, OnModuleInit {
         sessionId: dto.sessionId ?? null,
         agent: dto.agent ?? null,
         model: dto.model ?? null,
+        effort: dto.effort ?? null,
         provider,
         writes,
       },
@@ -141,6 +142,7 @@ export class ChatService implements RunHandler, OnModuleInit {
       },
       sessionId: run.sessionId ?? undefined,
       model: run.model ?? undefined,
+      effort: run.effort ?? undefined,
       signal,
     })) {
       if (event.type === 'error') outcome = 'failed';
@@ -260,6 +262,8 @@ export class ChatService implements RunHandler, OnModuleInit {
       messages,
       /** Model chosen for the latest turn, to offer it again; null: the default one. */
       model: latest?.model ?? null,
+      /** Effort chosen for the latest turn; null: the model's default. */
+      effort: latest?.effort ?? null,
       /** The conversation's latest turn, to follow it or mark it seen. */
       lastRun: latest
         ? { runId: latest.id, status: latest.status, input: latest.input }

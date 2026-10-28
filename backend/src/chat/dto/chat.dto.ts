@@ -104,4 +104,9 @@ export class ChatMessageDto {
   @IsString()
   @Matches(/^[a-z0-9._:/@\-[\]]{1,160}$/i)
   model?: string;
+
+  /** One of the model's `efforts`, as listed by /connections; the model's default when omitted. */
+  @IsOptional()
+  @Matches(/^[a-z]{1,16}$/)
+  effort?: string;
 }
