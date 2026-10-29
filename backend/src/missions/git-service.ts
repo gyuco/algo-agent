@@ -698,6 +698,15 @@ export class GitService {
    * `http.extraHeader` from the environment: arguments show in the process
    * list, the environment doesn't. Errors are cleaned of the token.
    */
+  /** Pushes `branch` to origin with the machine's own git credentials (SSH, credential helper). */
+  async pushOrigin(dir: string, branch: string) {
+    await this.run(
+      dir,
+      ['push', 'origin', `refs/heads/${branch}:refs/heads/${branch}`],
+      this.fetchTimeout(),
+    );
+  }
+
   async push(
     dir: string,
     remoteHttpsUrl: string,

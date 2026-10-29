@@ -19,6 +19,8 @@ export interface Answer {
   output: string;
   costUsd: number;
   failed: boolean;
+  /** Why it failed, when the agent said so (e.g. the provider's error). */
+  error?: string;
   verdict?: string;
   sessionId?: string;
 }
@@ -330,6 +332,7 @@ async function* runStep(
     return yield* finish(ctx, [step], ok ? 'done' : 'failed');
   }
 
+  if (answer.error) result.error = answer.error;
   return yield* finish(ctx, [step], answer.failed ? 'failed' : 'done');
 }
 
@@ -389,7 +392,10 @@ async function* runBlock(
           );
     const made = yield* answerOf(ctx, step, prompt);
     result.costUsd += made.costUsd;
-    if (made.failed) return yield* finish(ctx, [step], 'failed');
+    if (made.failed) {
+      if (made.error) result.error = made.error;
+      return yield* finish(ctx, [step], 'failed');
+    }
     Object.assign(result, { output: made.output, verdict: made.verdict });
     ctx.outputs[step.id] = made.output;
 
@@ -418,6 +424,7 @@ async function* runBlock(
     );
     checked.costUsd += verdict.costUsd;
     if (verdict.failed) {
+      if (verdict.error) checked.error = verdict.error;
       return yield* finish(ctx, [check, step], 'failed');
     }
     Object.assign(checked, {
@@ -494,13 +501,11 @@ async function* answerOf(
   const costUsd = first.costUsd + retry.costUsd;
   const again = parseVerdict(retry.output, values);
   if (retry.failed || !again.verdict) {
-    if (!retry.failed) {
-      yield {
-        type: 'error',
-        message: `Il passo ${step.id} non ha dato un verdetto valido (${values.join(', ')})`,
-      };
-    }
-    return { ...first, costUsd, failed: true };
+    const error =
+      retry.error ??
+      `Il passo ${step.id} non ha dato un verdetto valido (${values.join(', ')})`;
+    if (!retry.failed) yield { type: 'error', message: error };
+    return { ...first, costUsd, failed: true, error };
   }
   return { ...first, output: parsed.text, costUsd, verdict: again.verdict };
 }

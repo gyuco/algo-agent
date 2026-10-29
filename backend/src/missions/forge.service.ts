@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { execFile } from 'node:child_process';
 
 export interface Forge {
   kind: 'github' | 'gitlab';
@@ -46,7 +47,8 @@ export function httpsUrl(remoteUrl: string) {
   }
   try {
     const url = new URL(remoteUrl);
-    if (!['ssh:', 'git:', 'http:', 'https:'].includes(url.protocol)) return remoteUrl;
+    if (!['ssh:', 'git:', 'http:', 'https:'].includes(url.protocol))
+      return remoteUrl;
     return `https://${url.host}${url.pathname.replace(/\.git$/, '')}.git`;
   } catch {
     return remoteUrl;
@@ -95,8 +97,37 @@ export function detect(remoteUrl: string, gitlabUrl?: string): Forge | null {
   return null;
 }
 
+/** The forge page that opens a pull/merge request from `branch` into `base`. */
+export function newPrUrl(forge: Forge, branch: string, base: string) {
+  const repo = `https://${forge.host}/${forge.owner}/${forge.repo}`;
+  return forge.kind === 'github'
+    ? `${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}?expand=1`
+    : `${repo}/-/merge_requests/new?merge_request[source_branch]=${encodeURIComponent(branch)}&merge_request[target_branch]=${encodeURIComponent(base)}`;
+}
+
+const CLI_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class ForgeService {
+  /**
+   * The token of the forge's CLI on this machine (`gh`, `glab`), when it is
+   * logged in: the fallback when the vault has none.
+   */
+  cliToken(forge: Forge): Promise<string | null> {
+    const [command, args] =
+      forge.kind === 'github'
+        ? ['gh', ['auth', 'token', '--hostname', forge.host]]
+        : ['glab', ['config', 'get', 'token', '--host', forge.host]];
+    return new Promise((resolve) => {
+      execFile(
+        command,
+        args,
+        { timeout: CLI_TIMEOUT_MS, windowsHide: true },
+        (error, stdout) => resolve(error ? null : stdout.trim() || null),
+      );
+    });
+  }
+
   private headers(forge: Forge, token: string): Record<string, string> {
     return forge.kind === 'github'
       ? {
@@ -139,9 +170,7 @@ export class ForgeService {
     base: string,
   ): Promise<PullRequest | null> {
     if (forge.kind === 'github') {
-      const list = await this.call<
-        { html_url: string; number: number }[]
-      >(
+      const list = await this.call<{ html_url: string; number: number }[]>(
         forge,
         token,
         `/repos/${forge.owner}/${forge.repo}/pulls?head=${encodeURIComponent(`${forge.owner}:${head}`)}&base=${encodeURIComponent(base)}&state=open`,
@@ -212,7 +241,9 @@ export class ForgeService {
   ): Promise<{ httpsUrl: string; defaultBranch: string }> {
     const apiBase =
       input.apiBase ??
-      (kind === 'github' ? 'https://api.github.com' : 'https://gitlab.com/api/v4');
+      (kind === 'github'
+        ? 'https://api.github.com'
+        : 'https://gitlab.com/api/v4');
     const forge: Forge = {
       kind,
       host: new URL(apiBase).host,
@@ -232,7 +263,9 @@ export class ForgeService {
         body: {
           name: input.name,
           private: input.visibility !== 'public',
-          ...(input.visibility === 'internal' ? { visibility: 'internal' } : {}),
+          ...(input.visibility === 'internal'
+            ? { visibility: 'internal' }
+            : {}),
         },
       });
       return {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   ChecksService,
+  failureDetail,
   type CheckEvent,
   type CheckName,
 } from './checks.service.js';
@@ -341,5 +342,36 @@ setInterval(() => {}, 500)
     );
     await Promise.all([first, second]);
     expect(await readFile(log, 'utf8')).toBe('start;start;end;end;');
+  });
+});
+
+describe('failureDetail', () => {
+  const result = (output: string) => ({
+    name: 'test' as const,
+    argv: [],
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    durationMs: 0,
+    output,
+  });
+
+  it('starts at the error report, not at the banner', () => {
+    const output = [
+      '> pkg@0.1.0 test',
+      '> vitest run',
+      '==========',
+      'WARNING: package renamed',
+      ' \x1b[32m✓\x1b[39m passes',
+      '\x1b[41m FAIL \x1b[49m test/a.test.ts > slow case',
+      '\x1b[31mError\x1b[22m: Test timed out in 5000ms.',
+    ].join('\n');
+    expect(failureDetail(result(output))).toBe(
+      'FAIL  test/a.test.ts > slow case\nError: Test timed out in 5000ms.',
+    );
+  });
+
+  it('falls back to the start of the output', () => {
+    expect(failureDetail(result('one\ntwo'))).toBe('one\ntwo');
   });
 });

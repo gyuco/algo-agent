@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -265,7 +266,7 @@ export class MissionTasksService {
   }
 
   /** "Rifai con nota": the branch goes back to the mission's tip and the task runs again. */
-  async redo(userId: number, missionId: number, key: string, note: string) {
+  async redo(userId: number, missionId: number, key: string, note = '') {
     return this.scheduler.withLock(missionId, async () => {
       const { mission, task, plan } = await this.find(userId, missionId, key);
       if (!['review', 'blocked', 'scope'].includes(task.status)) {
@@ -322,7 +323,7 @@ export class MissionTasksService {
         blocked: undefined,
       };
       const notes = this.notes(task.notesJson);
-      notes.push(note);
+      if (note) notes.push(note);
 
       // The branch goes back to the mission's tip; the worktree is recreated if it's gone.
       const worktree =
@@ -523,6 +524,82 @@ export class MissionTasksService {
             : 'Passata in passo-passo: il prossimo task chiuso aspetta il tuo Ok.',
       });
       this.scheduler.wake(missionId);
+      return this.missions.get(userId, missionId);
+    });
+  }
+
+  /**
+   * The user changes the models of the team the orchestrator chose: a new plan
+   * version, used by the tasks that start from now on (a redo included).
+   */
+  async setTeamModels(
+    userId: number,
+    missionId: number,
+    models: { roles?: Record<string, string>; custom?: Record<string, string> },
+  ) {
+    return this.scheduler.withLock(missionId, async () => {
+      const mission = await this.prisma.mission.findFirst({
+        where: { id: missionId, userId },
+      });
+      if (!mission) throw new NotFoundException('Missione non trovata');
+      if (!['planned', 'running', 'paused', 'waiting'].includes(mission.status)) {
+        throw new ConflictException(
+          'I modelli si cambiano solo prima o durante la missione',
+        );
+      }
+      const parsed = mission.planJson
+        ? planSchema.safeParse(JSON.parse(mission.planJson))
+        : null;
+      if (!parsed?.success) {
+        throw new ConflictException('Il piano non è leggibile');
+      }
+      const { team } = parsed.data;
+      const roles = { ...team.roles };
+      for (const [role, model] of Object.entries(models.roles ?? {})) {
+        if (!roles[role]) throw new BadRequestException(`Ruolo sconosciuto: ${role}`);
+        roles[role] = { ...roles[role], model };
+      }
+      const custom = team.custom.map((agent) =>
+        models.custom?.[agent.key] ? { ...agent, model: models.custom[agent.key] } : agent,
+      );
+      for (const key of Object.keys(models.custom ?? {})) {
+        if (!team.custom.some((agent) => agent.key === key)) {
+          throw new BadRequestException(`Agente sconosciuto: ${key}`);
+        }
+      }
+      const next = planSchema.safeParse({ ...parsed.data, team: { ...team, roles, custom } });
+      if (!next.success) {
+        throw new BadRequestException(next.error.issues.map((i) => i.message).join('; '));
+      }
+      const changes = [
+        ...Object.entries(roles)
+          .filter(([role, spec]) => team.roles[role].model !== spec.model)
+          .map(([role, spec]) => `${role}: ${team.roles[role].model} → ${spec.model}`),
+        ...custom
+          .filter((agent, i) => team.custom[i].model !== agent.model)
+          .map((agent, i) => `${agent.key}: ${team.custom[i].model} → ${agent.model}`),
+      ];
+      if (!changes.length) return this.missions.get(userId, missionId);
+
+      const version = mission.planVersion + 1;
+      const { count } = await this.prisma.mission.updateMany({
+        where: { id: missionId, userId, planVersion: mission.planVersion },
+        data: {
+          planJson: JSON.stringify(next.data),
+          planVersion: version,
+          // An approved plan stays approved: only its models changed.
+          ...(mission.approvedVersion !== null ? { approvedVersion: version } : {}),
+        },
+      });
+      if (!count) {
+        throw new ConflictException('La missione è cambiata: ricarica e riprova');
+      }
+      await this.missions.record(missionId, 'plan', { version, plan: next.data });
+      await this.missions.record(missionId, 'decision', {
+        question: 'Modelli del team',
+        chosen: `piano v${version}`,
+        reason: `L'utente ha cambiato i modelli: ${changes.join(', ')}.`,
+      });
       return this.missions.get(userId, missionId);
     });
   }

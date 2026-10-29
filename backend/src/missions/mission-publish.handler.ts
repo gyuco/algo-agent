@@ -9,7 +9,14 @@ import type {
   RunOutcome,
 } from '../runs/run-types.js';
 import { VaultService } from '../vault/vault.service.js';
-import { detect, ForgeError, ForgeService, httpsUrl } from './forge.service.js';
+import {
+  detect,
+  ForgeError,
+  ForgeService,
+  type Forge,
+  httpsUrl,
+  newPrUrl,
+} from './forge.service.js';
 import { GitService } from './git-service.js';
 import { MissionsService } from './missions.service.js';
 import { planSchema } from './plan-schema.js';
@@ -47,7 +54,11 @@ export class MissionPublishHandler implements RunHandler, OnModuleInit {
       ? planSchema.safeParse(JSON.parse(mission.planJson))
       : null;
     if (!branch || !plan?.success) {
-      await this.wait(mission, 'push', 'Il branch o il piano non sono leggibili');
+      await this.wait(
+        mission,
+        'push',
+        'Il branch o il piano non sono leggibili',
+      );
       return 'done';
     }
 
@@ -74,14 +85,18 @@ export class MissionPublishHandler implements RunHandler, OnModuleInit {
     }
 
     const tokenName = forge.kind === 'github' ? 'GITHUB_TOKEN' : 'GITLAB_TOKEN';
-    const token = variables[tokenName];
+    const token = variables[tokenName] ?? (await this.forge.cliToken(forge));
     if (!token) {
-      await this.wait(
+      // No token in the vault nor a logged-in CLI: push with the local git credentials.
+      return yield* this.publishLocal(
         mission,
-        'token',
-        `Manca ${tokenName} nel vault: aggiungilo e riprova.`,
+        project.path,
+        forge,
+        branch,
+        plan.data.baseBranch,
+        tokenName,
+        signal,
       );
-      return 'done';
     }
 
     yield { type: 'publish_step', step: 'push', status: 'started' };
@@ -102,12 +117,7 @@ export class MissionPublishHandler implements RunHandler, OnModuleInit {
     yield { type: 'publish_step', step: 'pr', status: 'started' };
     try {
       const base = mission.baseBranch ?? plan.data.baseBranch ?? 'main';
-      const existing = await this.forge.findOpenPr(
-        forge,
-        token,
-        branch,
-        base,
-      );
+      const existing = await this.forge.findOpenPr(forge, token, branch, base);
       let url: string;
       if (existing) {
         url = existing.url;
@@ -142,6 +152,40 @@ export class MissionPublishHandler implements RunHandler, OnModuleInit {
       if (!signal.aborted) await this.wait(mission, 'pr', detail);
       return 'done';
     }
+  }
+
+  /** Pushes with the machine's git credentials; the pull request is left to the user. */
+  private async *publishLocal(
+    mission: Mission,
+    projectPath: string,
+    forge: Forge,
+    branch: string,
+    planBase: string | undefined,
+    tokenName: string,
+    signal: AbortSignal,
+  ): AsyncGenerator<RunEventData, RunOutcome> {
+    yield { type: 'publish_step', step: 'push', status: 'started' };
+    try {
+      await this.git.pushOrigin(projectPath, branch);
+      yield { type: 'publish_step', step: 'push', status: 'done' };
+    } catch (error) {
+      const detail = `${error instanceof Error ? error.message : String(error)}\nAggiungi ${tokenName} nel vault o configura le credenziali git e riprova.`;
+      yield { type: 'publish_step', step: 'push', status: 'failed', detail };
+      if (!signal.aborted) await this.wait(mission, 'push', detail);
+      return 'done';
+    }
+    const base = mission.baseBranch ?? planBase ?? 'main';
+    await this.done(mission, null);
+    await this.missions.record(
+      mission.id,
+      'note',
+      {
+        text: `Branch ${branch} pubblicato. Senza ${tokenName} la PR non è aperta in automatico: ${newPrUrl(forge, branch, base)}`,
+      },
+      {},
+    );
+    await this.cleanTaskWorktrees(mission, projectPath);
+    return 'done';
   }
 
   /** A local or published end: the mission is done and says where the work is. */

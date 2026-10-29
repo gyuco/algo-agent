@@ -6,6 +6,7 @@ import {
   type MissionMode,
   type PlanCommand,
 } from './api'
+import { TeamModels } from './TeamModels'
 
 const command = (value: PlanCommand) =>
   typeof value === 'string' ? value : `${value.run}${value.workdir ? ` (${value.workdir})` : ''}`
@@ -129,16 +130,7 @@ export function PlanView({ mission, onChanged }: Props) {
         </dd>
         <dt>{t('missions.team')}</dt>
         <dd>
-          {Object.entries(plan.team.roles).map(([role, spec]) => (
-            <div key={role}>
-              <strong>{role}</strong> · {spec.agent} · {spec.model} · {t('missions.turns', { n: String(spec.maxTurns) })}
-            </div>
-          ))}
-          {plan.team.custom.map((agent) => (
-            <div key={agent.key}>
-              <strong>{agent.key}</strong> · {agent.model} · {agent.permissions.files}
-            </div>
-          ))}
+          <TeamModels key={mission.planVersion} mission={mission} onChanged={onChanged} onError={setError} />
         </dd>
         <dt>{t('missions.budget')}</dt>
         <dd>

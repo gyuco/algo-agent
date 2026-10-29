@@ -12,6 +12,7 @@ import { VaultService } from '../vault/vault.service.js';
 import {
   ChecksService,
   CHECK_NAMES,
+  failureDetail,
   type CheckResult,
 } from './checks.service.js';
 import { GitService } from './git-service.js';
@@ -25,22 +26,6 @@ interface ChecksInput {
   purpose: ChecksPurpose;
   milestone?: string;
   taskId?: number;
-}
-
-const DETAIL_LINES = 5;
-const DETAIL_LENGTH = 500;
-
-function detailOf(result: CheckResult) {
-  const detail = result.output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, DETAIL_LINES)
-    .join('\n')
-    .slice(0, DETAIL_LENGTH);
-  if (result.timedOut)
-    return ['Timeout del comando', detail].filter(Boolean).join('\n');
-  return detail || `Exit code ${result.exitCode ?? 'sconosciuto'}`;
 }
 
 function violationsText(violations: ScopeViolation[]) {
@@ -199,7 +184,7 @@ export class MissionChecksHandler implements RunHandler, OnModuleInit {
         ...(input.taskId ? { taskId: input.taskId } : {}),
         ok,
         results: summary.results,
-        ...(failed ? { detail: detailOf(failed) } : {}),
+        ...(failed ? { detail: failureDetail(failed) } : {}),
       },
       input.taskId ? { taskId: input.taskId } : {},
     );
@@ -213,7 +198,7 @@ export class MissionChecksHandler implements RunHandler, OnModuleInit {
         await this.blockIntegration(
           mission,
           task,
-          failed ? detailOf(failed) : 'Controlli rossi',
+          failed ? failureDetail(failed) : 'Controlli rossi',
         );
       }
       return 'done';
@@ -229,7 +214,7 @@ export class MissionChecksHandler implements RunHandler, OnModuleInit {
           mission.id,
           results
             .filter((result) => !result.ok)
-            .map((result) => `${result.name}: ${detailOf(result)}`),
+            .map((result) => `${result.name}: ${failureDetail(result)}`),
         );
       }
     }

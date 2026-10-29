@@ -30,6 +30,7 @@ import {
   MissionsQueryDto,
   NewProjectMissionDto,
   RedoTaskDto,
+  TeamModelsDto,
 } from './dto/mission.dto.js';
 
 /** Starts a mission in one of the user's projects. */
@@ -258,6 +259,17 @@ export class MissionsController {
     @Body() dto: MissionModeDto,
   ) {
     return this.tasks.setMode(req.user.sub, id, dto.mode);
+  }
+
+  /** The models of the plan's team, changed by the user before or during the mission. */
+  @Post(':id/team')
+  @HttpCode(HttpStatus.OK)
+  setTeamModels(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TeamModelsDto,
+  ) {
+    return this.tasks.setTeamModels(req.user.sub, id, dto);
   }
 
   /** §5.7: accept the task's perimeter violations and widen the plan. */

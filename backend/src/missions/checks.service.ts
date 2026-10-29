@@ -59,6 +59,36 @@ export interface CheckResult {
   output: string;
 }
 
+const DETAIL_LINES = 5;
+const DETAIL_LENGTH = 500;
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+/** Where a runner's error report starts: vitest/jest, tsc, npm, thrown errors. */
+const FAILURE_START = /^(FAIL\b|ERROR\b|npm ERR!|npm error\b|\w*Error:)|error TS\d+/;
+
+/**
+ * A short, readable reason from a command's output, for waits and entries:
+ * from the first line of the error report, or from the start when none is found
+ * (the head of a test run is a banner, the failure comes later).
+ */
+export function failureDetail(result: CheckResult) {
+  const lines = result.output
+    .replace(ANSI, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const start = Math.max(
+    0,
+    lines.findIndex((line) => FAILURE_START.test(line)),
+  );
+  const detail = lines
+    .slice(start, start + DETAIL_LINES)
+    .join('\n')
+    .slice(0, DETAIL_LENGTH);
+  if (result.timedOut)
+    return ['Timeout del comando', detail].filter(Boolean).join('\n');
+  return detail || `Exit code ${result.exitCode ?? 'sconosciuto'}`;
+}
+
 /** The lockfiles whose content decides whether `setup` must run again. */
 const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'];
 const SETUP_MARK_VERSION = 1;

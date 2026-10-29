@@ -470,6 +470,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
         delete result.commands;
         delete result.warning;
         delete result.stopVerdict;
+        delete result.error;
       }
     }
     await resetToLastCheckpoint(this.git, worktree, steps, taskBase).catch(
@@ -556,7 +557,10 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
           watch.cut.abort();
         }
       }
-      if (event.type === 'error') answer.failed = true;
+      if (event.type === 'error') {
+        answer.failed = true;
+        answer.error = event.message;
+      }
       if (event.type === 'done') {
         answer.costUsd += event.costUsd;
         if (event.isError) answer.failed = true;
@@ -1044,6 +1048,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
         stopVerdict?: string;
         iterations?: unknown[];
         verdict?: string;
+        error?: string;
       }
     >,
     result?: { verdict?: string },
@@ -1054,6 +1059,15 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       return {
         reason: 'test_errati',
         detail: `La verifica ha dato "${stop[1].stopVerdict}"`,
+      };
+    }
+    // An agent that failed (provider down, no credit…) says why.
+    const failed = Object.entries(steps).find(([, s]) => s.error);
+    if (failed) {
+      const model = graph.agents?.[failed[0]]?.spec.model;
+      return {
+        reason: 'error',
+        detail: `${failed[0]}${model ? ` (${model})` : ''}: ${failed[1].error}`,
       };
     }
     const repeating = graph.steps.filter((s) => s.repeat);

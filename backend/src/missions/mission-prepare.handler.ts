@@ -14,6 +14,7 @@ import type {
 import { VaultService } from '../vault/vault.service.js';
 import {
   ChecksService,
+  failureDetail,
   type CheckEvent,
   type CheckName,
   type CheckRequest,
@@ -27,22 +28,6 @@ import { MissionsService } from './missions.service.js';
 import { planSchema, planTasks } from './plan-schema.js';
 
 const BASE_CHECKS: CheckName[] = ['build', 'lint', 'test'];
-const DETAIL_LINES = 5;
-const DETAIL_LENGTH = 500;
-
-/** A short, readable reason from a command's output, for the `baseline` wait. */
-function detailOf(result: CheckResult) {
-  const lines = result.output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, DETAIL_LINES);
-  const detail = lines.join('\n').slice(0, DETAIL_LENGTH);
-  if (result.timedOut)
-    return ['Timeout del comando', detail].filter(Boolean).join('\n');
-  return detail || `Exit code ${result.exitCode ?? 'sconosciuto'}`;
-}
-
 /** Yields events pushed while `work` runs, so the output reaches the user live. */
 async function* live(
   work: (push: (event: RunEventData) => void) => Promise<CheckResult[] | null>,
@@ -266,7 +251,7 @@ export class MissionPrepareHandler implements RunHandler, OnModuleInit {
     });
     const setup = setupResults?.[0] ?? null;
     if (setup && !setup.ok) {
-      await this.fail(run, signal, 'setup', detailOf(setup), setup.output);
+      await this.fail(run, signal, 'setup', failureDetail(setup), setup.output);
       return 'done';
     }
     // No events when the marker is fresh: say it here.
@@ -299,7 +284,7 @@ export class MissionPrepareHandler implements RunHandler, OnModuleInit {
           run,
           signal,
           failed.name,
-          detailOf(failed),
+          failureDetail(failed),
           failed.output,
         );
         return 'done';

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useI18n } from '../i18n/useI18n'
 import { missionsApi, type Mission, type MissionTask } from './api'
 
-/** `task_blocked`: why it stopped, then "Rifai con nota" or "Salta". */
+/** `task_blocked`: why it stopped, then "Riprova" (with an optional note) or "Salta". */
 export function TaskBlockedWait({
   mission,
   task,
@@ -35,9 +35,12 @@ export function TaskBlockedWait({
     <section className="card task-wait">
       <h2>{t('missions.wait.blockedTitle', { key: task.key })}</h2>
       {blocked && (
-        <p className="error" role="alert">
-          {t('missions.task.blockedReason', { reason: blocked.reason })}: {blocked.detail}
-        </p>
+        <>
+          <p className="error" role="alert">
+            {t('missions.task.blockedReason', { reason: blocked.reason })}: {blocked.detail}
+          </p>
+          <p className="hint">{t('missions.wait.blockedFix')}</p>
+        </>
       )}
       {task.report?.review && (
         <>
@@ -65,10 +68,10 @@ export function TaskBlockedWait({
         </button>
         <button
           type="button"
-          disabled={busy || !note.trim()}
+          disabled={busy}
           onClick={() => void act(() => missionsApi.taskRedo(mission.id, task.key, note.trim()))}
         >
-          {t('missions.wait.redo')}
+          {note.trim() ? t('missions.wait.redo') : t('missions.wait.retry')}
         </button>
       </div>
     </section>

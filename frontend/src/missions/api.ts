@@ -318,6 +318,11 @@ export const missionsApi = {
       method: 'POST',
       body: JSON.stringify({ mode }),
     }),
+  setTeamModels: (id: number, models: { roles?: Record<string, string>; custom?: Record<string, string> }) =>
+    api<Mission>(`/missions/${id}/team`, {
+      method: 'POST',
+      body: JSON.stringify(models),
+    }),
   acceptScope: (id: number) => api<Mission>(`/missions/${id}/scope/accept`, { method: 'POST' }),
   retryPublish: (id: number) => api<Mission>(`/missions/${id}/publish/retry`, { method: 'POST' }),
   entries: (id: number) => api<MissionEntry[]>(`/missions/${id}/entries`),

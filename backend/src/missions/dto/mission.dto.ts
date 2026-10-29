@@ -6,6 +6,7 @@ import {
   IsIn,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
@@ -137,12 +138,24 @@ export class MissionModeDto {
   mode: MissionMode;
 }
 
+/** The models to give the plan's roles and custom agents, by name. */
+export class TeamModelsDto {
+  @IsOptional()
+  @IsObject()
+  roles?: Record<string, string>;
+
+  @IsOptional()
+  @IsObject()
+  custom?: Record<string, string>;
+}
+
 export class RedoTaskDto {
+  /** Optional: a blocked task can be retried as it is, e.g. after a model change. */
+  @IsOptional()
   @Transform(trim)
   @IsString()
-  @MinLength(1)
   @MaxLength(4_000)
-  note: string;
+  note?: string;
 }
 
 export class MissionsQueryDto {

@@ -9,7 +9,8 @@ import { notificationText } from './notifications'
  */
 export function useMissionNotifications(enabled: boolean) {
   const { t } = useI18n()
-  const [unread, setUnread] = useState(0)
+  // Mission ids, not entries: one mission with many entries counts once.
+  const [unread, setUnread] = useState<ReadonlySet<number>>(new Set())
   const [permission, setPermission] = useState<NotificationPermission>(() =>
     typeof Notification === 'undefined' ? 'denied' : Notification.permission,
   )
@@ -29,7 +30,7 @@ export function useMissionNotifications(enabled: boolean) {
       .catch(() => undefined)
     void missionsApi
       .list({ unread: true })
-      .then((list) => setUnread(list.length))
+      .then((list) => setUnread(new Set(list.map((mission) => mission.id))))
       .catch(() => undefined)
   }
 
@@ -39,7 +40,9 @@ export function useMissionNotifications(enabled: boolean) {
     const timer = setInterval(refresh, 30_000)
     const controller = new AbortController()
     const notify = (entry: MissionEntry) => {
-      setUnread((count) => count + 1)
+      setUnread((ids) =>
+        ids.has(entry.missionId) ? ids : new Set(ids).add(entry.missionId),
+      )
       if (!entry.notify) return
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
       if (document.visibilityState === 'visible') return
@@ -82,5 +85,5 @@ export function useMissionNotifications(enabled: boolean) {
     void Notification.requestPermission().then(setPermission)
   }
 
-  return { unread, permission, request }
+  return { unread: unread.size, permission, request }
 }

@@ -39,6 +39,8 @@ export interface StepResult {
   stopVerdict?: string;
   /** Something to know about how it ended, e.g. a repeat that ran out of rounds. */
   warning?: string;
+  /** Why the step failed, e.g. the error its agent's provider gave. */
+  error?: string;
 }
 
 /** One round of a step that repeats. */

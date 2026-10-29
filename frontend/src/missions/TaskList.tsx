@@ -1,5 +1,7 @@
 import { useI18n } from '../i18n/useI18n'
 import { TASK_STATUS_KEY, type Mission, type MissionTask } from './api'
+import { TASK_TONE } from './missionStage'
+import { StatusIcon } from './StatusIcon'
 
 /** The plan's tasks by milestone, with their state; a row opens the task. */
 export function TaskList({
@@ -15,29 +17,32 @@ export function TaskList({
   const tasks = mission.tasks ?? []
   const byKey = new Map(tasks.map((task) => [task.key, task]))
   const milestones = mission.plan?.milestones ?? []
-  const current = mission.progress?.currentMilestone?.id
+  const current = mission.status === 'done' ? undefined : mission.progress?.currentMilestone?.id
   const reviewed = new Set(mission.progress?.reviewedMilestones ?? [])
 
+  // One line under the title, fixed by the state: the stream stays in the task view.
   const row = (task: MissionTask) => {
-    const blocked = task.status === 'blocked' ? task.report?.blocked : undefined
+    const tone = TASK_TONE[task.status]
+    const status = t(TASK_STATUS_KEY[task.status])
+    const notes = [
+      task.attempts > 0 && t('missions.task.attempt', { n: String(task.attempts + 1) }),
+      task.waitingOn.length > 0 && t('missions.task.waits', { keys: task.waitingOn.join(', ') }),
+    ].filter(Boolean)
     return (
       <li key={task.key}>
         <button
           type="button"
-          className={`task-row ${selected === task.key ? 'selected' : ''}`}
+          className={`task-row ${tone} ${selected === task.key ? 'selected' : ''}`}
+          aria-current={selected === task.key}
           onClick={() => onSelect(task.key)}
         >
-          <span className={`badge ${task.status === 'blocked' ? 'danger' : task.status === 'done' ? 'accent' : ''}`}>
-            {t(TASK_STATUS_KEY[task.status])}
-          </span>
-          <span className="task-key">{task.key}</span>
-          <span className="task-title">{task.title}</span>
+          <StatusIcon tone={tone} label={status} />
+          <span className="task-title">{task.title || task.key}</span>
+          <span className={`task-status ${tone}`}>{status}</span>
           <small className="hint">
-            {t('missions.task.attempt', { n: String(task.attempts + 1) })}
-            {task.waitingOn.length > 0 && ` · ${t('missions.task.waits', { keys: task.waitingOn.join(', ') })}`}
+            <code>{task.key}</code>
+            {notes.length > 0 && ` · ${notes.join(' · ')}`}
           </small>
-          {blocked && <small className="error">{blocked.detail}</small>}
-          {task.report?.summary && <small className="hint task-last">{task.report.summary.split('\n')[0]}</small>}
         </button>
       </li>
     )
@@ -48,13 +53,17 @@ export function TaskList({
       {milestones.map((milestone) => {
         const rows = milestone.tasks.map((task) => byKey.get(task.key)).filter((task): task is MissionTask => Boolean(task))
         if (!rows.length) return null
+        const done = rows.filter((task) => task.status === 'done' || task.status === 'skipped').length
         return (
           <section
             key={milestone.id}
             className={`milestone ${current === milestone.id ? 'current' : ''}`}
           >
             <h3>
-              {milestone.title ?? milestone.id}
+              <span>{milestone.title ?? milestone.id}</span>
+              <span className="hint">
+                {done}/{rows.length}
+              </span>
               {current === milestone.id && (
                 <span className="badge accent">{t('missions.milestone.current')}</span>
               )}
