@@ -10,6 +10,8 @@ import { commandText, type Plan, type PlanTask } from './plan-schema.js';
 export interface ResolvedAgent {
   spec: AgentSpec;
   tools: ('run_checks')[];
+  /** The plan role the agent fills, when the template named one. */
+  role?: string;
 }
 
 /** A task's model, frozen when its run starts. */
@@ -107,6 +109,7 @@ export class TaskGraphFactory {
           model: spec.model,
         },
         tools: spec.permissions.files === 'write' ? ['run_checks'] : [],
+        role,
       };
     }
 
@@ -129,6 +132,7 @@ export class TaskGraphFactory {
         maxTurns: assigned.maxTurns,
       },
       tools: base.permissions.files === 'write' ? ['run_checks'] : [],
+      role,
     };
   }
 

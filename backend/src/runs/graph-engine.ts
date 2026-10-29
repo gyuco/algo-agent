@@ -57,6 +57,8 @@ export interface StepPort {
   afterWrite?(step: GraphStep): Promise<string | null>;
   /** Before a step: false stops here in `waiting` (budget, later phase). */
   mayStart?(step: GraphStep): Promise<boolean>;
+  /** Who runs the step: the model and the plan role, recorded on the step. */
+  describe?(step: GraphStep): { model?: string; role?: string };
   /** What an approval asks the user: only the workflow engine uses it. */
   approval?(step: GraphStep): Promise<{ writes: boolean }>;
 }
@@ -283,9 +285,11 @@ async function* runStep(
   ctx: GraphContext,
   step: GraphStep,
 ): AsyncGenerator<RunEventData, boolean> {
-  yield { type: 'step_started', id: step.id, agent: step.agent };
+  const who = ctx.port.describe?.(step) ?? {};
+  yield { type: 'step_started', id: step.id, agent: step.agent, ...who };
   const result: StepResult = {
     ...ctx.steps[step.id],
+    ...who,
     agent: step.agent,
     status: 'running',
     output: '',
@@ -349,8 +353,11 @@ async function* runBlock(
   const { until, max, onMax, stop } = step.repeat!;
   const now = () => new Date().toISOString();
   const iterations = ctx.steps[step.id]?.iterations ?? [];
+  const who = ctx.port.describe?.(step) ?? {};
+  const checker = ctx.port.describe?.(check) ?? {};
   const result: StepResult = {
     ...ctx.steps[step.id],
+    ...who,
     agent: step.agent,
     status: 'running',
     output: '',
@@ -360,6 +367,7 @@ async function* runBlock(
     iterations,
   };
   const checked: StepResult = {
+    ...checker,
     agent: check.agent,
     status: 'pending',
     output: '',
@@ -369,7 +377,7 @@ async function* runBlock(
   };
   ctx.steps[step.id] = result;
   ctx.steps[check.id] = checked;
-  yield { type: 'step_started', id: step.id, agent: step.agent };
+  yield { type: 'step_started', id: step.id, agent: step.agent, ...who };
 
   let last = iterations.at(-1);
   for (let i = iterations.length + 1; i <= max; i++) {
@@ -406,7 +414,7 @@ async function* runBlock(
 
     if (!checked.startedAt) {
       checked.startedAt = now();
-      yield { type: 'step_started', id: check.id, agent: check.agent };
+      yield { type: 'step_started', id: check.id, agent: check.agent, ...checker };
     }
     checked.status = 'running';
     yield {

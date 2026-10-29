@@ -49,6 +49,9 @@ export type StepStatus = 'pending' | 'waiting_approval' | 'running' | 'done' | '
 export interface StepResult {
   id: string
   agent: string
+  /** The model the agent ran with, and the plan role it filled (missions). */
+  model?: string
+  role?: string
   status: StepStatus
   output: string
   costUsd: number
@@ -120,7 +123,7 @@ export interface Run {
 
 export type RunEvent =
   | ChatEvent
-  | { type: 'step_started'; id: string; agent: string }
+  | { type: 'step_started'; id: string; agent: string; model?: string; role?: string }
   | { type: 'step_finished'; id: string; status: StepStatus }
   | { type: 'approval_requested'; id: string; agent: string; prompt: string; writes: boolean }
   /** A round of a repeat begins: `id` is the step running this part, the one that repeats or its check. */

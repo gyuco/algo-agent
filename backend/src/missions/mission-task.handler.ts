@@ -331,6 +331,10 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
           signal,
           watch,
         ),
+      describe: (step: GraphStep) => {
+        const resolved = byStep.get(step.id);
+        return { model: resolved?.spec.model, role: resolved?.role };
+      },
       runCommands: (step: GraphStep) =>
         this.runCommands(
           step,

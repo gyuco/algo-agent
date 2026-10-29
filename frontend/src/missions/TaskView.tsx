@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MessageText } from '../chat/MessageText'
 import { useI18n } from '../i18n/useI18n'
-import { runsApi, type RunStatus, type StepStatus } from '../runs/api'
+import { runsApi, type RunStatus, type StepResult, type StepStatus } from '../runs/api'
 import type { RunStep } from '../runs/RunSteps'
-import { missionsApi, TASK_STATUS_KEY, type MissionTaskDetail, type TaskStatus } from './api'
+import { missionsApi, TASK_STATUS_KEY, type MissionTaskDetail, type Plan, type TaskStatus } from './api'
 import { DiffView } from './DiffView'
 import { TASK_TONE, type TaskTone } from './missionStage'
 import { StatusIcon } from './StatusIcon'
@@ -11,6 +11,32 @@ import { StatusIcon } from './StatusIcon'
 interface LiveStep extends RunStep {
   commands?: string[]
   violations?: string[]
+  model?: string
+  role?: string
+  verdict?: string
+  costUsd?: number
+}
+
+type Team = Plan['team']
+
+/**
+ * Who ran a step and what it ended with: the saved step first, the plan's
+ * team for runs from before steps kept their model.
+ */
+function withWho(step: LiveStep, saved: StepResult[] | undefined, team: Team | undefined): LiveStep {
+  const kept = saved?.find((s) => s.id === step.id)
+  const next: LiveStep = {
+    ...step,
+    model: step.model ?? kept?.model,
+    role: step.role ?? kept?.role,
+    verdict: step.verdict ?? kept?.verdict,
+    costUsd: step.costUsd ?? kept?.costUsd,
+  }
+  if (next.model || !team || !step.agent) return next
+  const custom = team.custom.find((agent) => agent.key === step.agent)
+  if (custom) return { ...next, model: custom.model }
+  const role = Object.entries(team.roles).find(([, spec]) => spec.agent === step.agent)
+  return role ? { ...next, model: role[1].model, role: next.role ?? role[0] } : next
 }
 
 /** One task: its live steps, the commands, the violations and the diff. */
@@ -19,6 +45,7 @@ export function TaskView({
   taskKey,
   status,
   compact = false,
+  team,
   onError,
 }: {
   missionId: number
@@ -27,6 +54,8 @@ export function TaskView({
   status?: TaskStatus
   /** The task's wait card already shows the outcome and the diff: only the log stays. */
   compact?: boolean
+  /** The plan's team, to name the model of steps that did not record it. */
+  team?: Team
   onError: (message: string) => void
 }) {
   const { t } = useI18n()
@@ -89,7 +118,13 @@ export function TaskView({
         for await (const event of runsApi.follow(task.runId!, abort.signal)) {
           switch (event.type) {
             case 'step_started':
-              upsert(event.id, event.agent, (s) => ({ ...s, status: 'running', current: true }))
+              upsert(event.id, event.agent, (s) => ({
+                ...s,
+                status: 'running',
+                current: true,
+                ...(event.model ? { model: event.model } : {}),
+                ...(event.role ? { role: event.role } : {}),
+              }))
               setSteps((list) => list.map((s) => ({ ...s, current: s.id === event.id })))
               break
             case 'iteration_started':
@@ -167,6 +202,8 @@ export function TaskView({
   // Working: the live steps lead. Settled: the outcome leads, the log folds away.
   const live = task.status === 'running' || task.status === 'merging'
   const report = task.report
+  const saved = task.runs.find((run) => run.id === task.runId)?.steps
+  const agents = steps.map((s) => withWho(s, saved, team))
 
   return (
     <section className={`card task-view ${tone}`}>
@@ -199,7 +236,12 @@ export function TaskView({
           <StatusIcon tone="running" /> {t('missions.task.starting')}
         </p>
       )}
-      {live && <StepTimeline steps={steps} />}
+      {live && agents.length > 0 && (
+        <section>
+          <h3>{t('missions.task.agents')}</h3>
+          <StepTimeline steps={agents} />
+        </section>
+      )}
 
       {!live && !compact && report && (
         <section className="task-outcome">
@@ -232,11 +274,11 @@ export function TaskView({
         </details>
       )}
 
-      {!live && steps.length > 0 && (
-        <details>
-          <summary>{t('missions.task.log')}</summary>
-          <StepTimeline steps={steps} />
-        </details>
+      {!live && agents.length > 0 && (
+        <section>
+          <h3>{t('missions.task.agents')}</h3>
+          <StepTimeline steps={agents} />
+        </section>
       )}
 
       {report?.previous && (
@@ -256,13 +298,13 @@ export function TaskView({
                 run {run.id} · {run.status} · ${run.costUsd.toFixed(2)}
               </summary>
               <StepTimeline
-                steps={run.steps.map((s) => ({
-                  id: s.id,
-                  agent: s.agent,
-                  status: s.status,
-                  text: s.output,
-                  tools: [],
-                }))}
+                steps={run.steps.map((s) =>
+                  withWho(
+                    { id: s.id, agent: s.agent, status: s.status, text: s.output, tools: [] },
+                    run.steps,
+                    team,
+                  ),
+                )}
               />
             </details>
           ))}
@@ -308,13 +350,16 @@ function StepTimeline({ steps }: { steps: LiveStep[] }) {
           <li key={i} className={`task-step ${tone}`}>
             <div className="task-step-head">
               <StatusIcon tone={tone} />
-              <strong>{s.id}</strong>
-              <span className="hint">{s.agent}</span>
-              {s.round && (
-                <span className="hint">
-                  · {t('workflows.round', { n: String(s.round.n), max: String(s.round.max) })}
-                </span>
-              )}
+              <strong>{s.agent || s.id}</strong>
+              {s.model && <code className="model-chip">{s.model}</code>}
+              <span className="hint">
+                {s.role ? t('missions.task.stepRole', { step: s.id, role: s.role }) : s.id}
+                {s.round && ` · ${t('workflows.round', { n: String(s.round.n), max: String(s.round.max) })}`}
+              </span>
+              <span className="task-step-end">
+                {s.verdict && <span className="badge">{s.verdict}</span>}
+                {s.costUsd !== undefined && s.costUsd > 0 && <span className="hint">${s.costUsd.toFixed(2)}</span>}
+              </span>
             </div>
             {s.tools.length > 0 && (
               <p className="hint task-step-tools">

@@ -2953,3 +2953,45 @@ button.danger-text {
     flex-wrap: wrap;
   }
 }
+
+/* Who worked: agent, model, role. */
+.model-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: var(--glass-input);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.task-step-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mission-team h3 {
+  margin: 0 0 8px;
+}
+
+.mission-team ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mission-team li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.mission-team li .hint {
+  flex-basis: 100%;
+  font-size: 0.8125rem;
+}

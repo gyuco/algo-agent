@@ -38,7 +38,14 @@ export type RunOutcome = 'done' | 'failed' | 'waiting';
 /** What a run emits: a provider event, a workflow step starting or ending, or the run ending. */
 export type RunEventData =
   | ChatEvent
-  | { type: 'step_started'; id: string; agent: string }
+  | {
+      type: 'step_started';
+      id: string;
+      agent: string;
+      /** The model and the plan role the agent ran with, when the port knows them. */
+      model?: string;
+      role?: string;
+    }
   | { type: 'step_finished'; id: string; status: StepStatus }
   | {
       type: 'iteration_started';

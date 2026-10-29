@@ -12,6 +12,9 @@ export type StepStatus =
 /** One workflow step of a run, as kept in `stepsJson`. */
 export interface StepResult {
   agent: string;
+  /** The model the agent ran with, and the plan role it filled (missions). */
+  model?: string;
+  role?: string;
   status: StepStatus;
   output: string;
   costUsd: number;

@@ -6,6 +6,7 @@ import { BriefingView } from './BriefingView'
 import { BudgetBars } from './BudgetBars'
 import { MilestoneWait } from './MilestoneWait'
 import { MissionProgress } from './MissionProgress'
+import { MissionTeam } from './MissionTeam'
 import { missionStage } from './missionStage'
 import { PlanView } from './PlanView'
 import { PreparationView } from './PreparationView'
@@ -248,6 +249,7 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
             ) : (
               <BriefingView mission={mission} entries={entries} onChanged={refresh} />
             )}
+            {tab === 'tasks' && <MissionTeam mission={mission} />}
             {live && (
               <details className="card mission-settings">
                 <summary>{t('missions.settings')}</summary>
@@ -358,6 +360,7 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
               taskKey={selected}
               status={selectedTask?.status}
               compact={taskInCard}
+              team={mission.plan?.team}
               onError={setError}
             />
           )}
