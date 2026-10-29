@@ -63,6 +63,17 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
     }
   }
 
+  async function resume() {
+    if (!mission) return
+    setActionError(null)
+    try {
+      await missionsApi.resume(mission.id)
+      await refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : t('error.unexpected'))
+    }
+  }
+
   async function remove() {
     if (!mission) return
     if (!window.confirm(t('missions.deleteConfirm'))) return
@@ -160,6 +171,11 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
           {mission.status !== 'aborted' && mission.status !== 'done' && (
             <button type="button" className="danger" onClick={() => void abort()}>
               {t('missions.abort')}
+            </button>
+          )}
+          {mission.status === 'aborted' && (
+            <button type="button" onClick={() => void resume()}>
+              {t('missions.resume')}
             </button>
           )}
           {(mission.status === 'approved' || mission.status === 'aborted') && (

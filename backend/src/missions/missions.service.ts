@@ -69,6 +69,16 @@ import { Sandbox } from './sandbox.js';
 const TITLE_LENGTH = 80;
 const TRANSCRIPT_LENGTH = 60_000;
 const RECONCILE_MS = 30_000;
+/** The states a stopped mission can go back to. */
+const RESUMABLE = [
+  'briefing',
+  'planned',
+  'approved',
+  'running',
+  'waiting',
+  'paused',
+  'integrating',
+];
 
 /** The orchestrator isn't a catalog agent: it exists only for missions. */
 export function orchestratorAgent(): AgentSpec {
@@ -1301,7 +1311,7 @@ export class MissionsService
   }
 
   async abort(userId: number, id: number) {
-    await this.find(userId, id);
+    const { status: from, waitJson } = await this.find(userId, id);
     const active = await this.prisma.run.findMany({
       where: { missionId: id, status: { in: ACTIVE_STATUSES } },
       select: { id: true },
@@ -1312,15 +1322,131 @@ export class MissionsService
       data: { status: 'aborted', waitJson: null, finishedAt: new Date() },
     });
     // A task running while the mission is stopped ends with it; its worktree stays.
-    await this.prisma.missionTask.updateMany({
+    const stopped = await this.prisma.missionTask.findMany({
       where: {
         missionId: id,
         status: { in: ['running', 'review', 'merging'] },
       },
+      select: { id: true, status: true, finishedAt: true },
+    });
+    await this.prisma.missionTask.updateMany({
+      where: { id: { in: stopped.map((task) => task.id) } },
       data: { status: 'aborted', finishedAt: new Date() },
     });
-    if (count) await this.entry(id, 'status', { status: 'aborted' });
+    // What the mission and its tasks were doing: a resume puts them back.
+    if (count) {
+      await this.entry(id, 'status', {
+        status: 'aborted',
+        from,
+        wait: waitJson ? (JSON.parse(waitJson) as unknown) : null,
+        tasks: stopped,
+      });
+    }
     return this.get(userId, id);
+  }
+
+  /**
+   * Puts a stopped mission back where it was. Work in progress resumes from
+   * the state the stop recorded: the briefing, the preparation, or the tasks
+   * (a task cut mid-run goes on from its last checkpoint, see the scheduler).
+   */
+  async resume(userId: number, id: number) {
+    const mission = await this.find(userId, id);
+    if (mission.status !== 'aborted') {
+      throw new ConflictException('Si riprende solo una missione fermata');
+    }
+    const active = await this.prisma.run.count({
+      where: { missionId: id, status: { in: ACTIVE_STATUSES } },
+    });
+    if (active) {
+      throw new ConflictException(
+        'La missione si sta ancora fermando: riprova tra poco',
+      );
+    }
+    const stop = await this.lastStop(id);
+    // Integration and a paused window are derived again by the scheduler.
+    const status = ['running', 'paused', 'integrating'].includes(stop.from)
+      ? 'running'
+      : stop.from;
+    const wait = status === stop.from && status !== 'approved' ? stop.wait : null;
+
+    const tasks = await this.prisma.missionTask.findMany({
+      where: { missionId: id, status: 'aborted' },
+    });
+    const before = new Map(stop.tasks.map((task) => [task.id, task]));
+    for (const task of tasks) {
+      const previous = before.get(task.id) ?? {
+        status: task.runId ? 'running' : 'pending',
+        finishedAt: null,
+      };
+      // A run can go on only from its worktree; otherwise the task starts over.
+      const restored =
+        previous.status === 'running' && !(task.runId && task.worktreePath)
+          ? 'pending'
+          : previous.status;
+      await this.prisma.missionTask.update({
+        where: { id: task.id },
+        data: {
+          status: restored,
+          finishedAt:
+            restored === 'running' || restored === 'pending'
+              ? null
+              : previous.finishedAt,
+        },
+      });
+    }
+
+    const { count } = await this.prisma.mission.updateMany({
+      where: { id, userId, status: 'aborted' },
+      data: {
+        status,
+        waitJson: wait ? JSON.stringify(wait) : null,
+        finishedAt: null,
+      },
+    });
+    if (!count) {
+      throw new ConflictException('La missione è cambiata: ricarica e riprova');
+    }
+    await this.entry(id, 'status', { status, resumed: true });
+    if (status === 'approved') await this.queuePrepare(id);
+    return this.get(userId, id);
+  }
+
+  /** The state recorded by the last stop; older stops recorded only the status. */
+  private async lastStop(missionId: number) {
+    const entries = await this.prisma.missionEntry.findMany({
+      where: { missionId, kind: 'status' },
+      orderBy: { id: 'desc' },
+    });
+    const parsed = entries.map(
+      (entry) =>
+        JSON.parse(entry.dataJson) as {
+          status?: string;
+          from?: string;
+          wait?: unknown;
+          tasks?: { id: number; status: string; finishedAt: string | null }[];
+        },
+    );
+    const stopAt = parsed.findIndex((data) => data.status === 'aborted');
+    const stop = stopAt >= 0 ? parsed[stopAt] : {};
+    const from =
+      stop.from ??
+      parsed
+        .slice(stopAt + 1)
+        .find((data) => data.status && data.status !== 'aborted')?.status ??
+      'briefing';
+    if (!RESUMABLE.includes(from)) {
+      throw new ConflictException('Questa missione non si può riprendere');
+    }
+    return {
+      from,
+      wait: stop.wait ?? null,
+      tasks: (stop.tasks ?? []).map((task) => ({
+        id: task.id,
+        status: task.status,
+        finishedAt: task.finishedAt ? new Date(task.finishedAt) : null,
+      })),
+    };
   }
 
   async remove(userId: number, id: number) {

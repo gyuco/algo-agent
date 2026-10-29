@@ -2175,9 +2175,8 @@ button.icon.copy:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  /* The same centred column as the missions list. */
-  width: min(960px, 100%);
-  margin-inline: auto;
+  /* The briefing and the plan take the whole panel, like the chat. */
+  width: 100%;
 }
 
 .mission-header {
@@ -2282,9 +2281,13 @@ button.icon.copy:focus-visible {
   min-width: 0;
 }
 
-/* The shared card caps at 360px: the briefing reads at the column's width, like the chat. */
-.mission-briefing {
+/* The shared card caps at 360px: the briefing and the plan read at the column's width, like the chat. */
+.mission-briefing,
+.mission-plan {
   max-width: none;
+}
+
+.mission-briefing {
   padding: 1rem;
 }
 

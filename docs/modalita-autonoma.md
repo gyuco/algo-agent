@@ -29,7 +29,9 @@ Fissate con l'utente prima di scrivere questo documento:
 2. **Briefing**: l'orchestratore esplora il progetto e intervista l'utente con una domanda alla
    volta. L'utente può allegare documenti. Il piano si rivede finché l'utente non lo approva.
 3. **Team**: si definisce nel briefing, come parte del piano: ruoli base e agenti specializzati,
-   con modello e permessi. Durante l'esecuzione non cambia.
+   con modello e permessi. Lo sceglie l'utente: prima di `propose_plan` l'orchestratore lo
+   chiede con `ask_user`, proponendo agente e modello per ogni ruolo. Durante l'esecuzione non
+   cambia.
 4. **Modalità**:
    - *passo-passo*: a ogni task chiusa la missione si ferma e aspetta l'utente;
    - *automatica*: arriva fino alla PR. Si fermano solo task bloccate, budget e cambi fuori
@@ -373,7 +375,7 @@ briefing ⇄ planned ──(approva)──▶ approved ──(prepare ok)──�
                              (prepare ko)│               waiting ┘
                                           ▼            paused (5 ore) ──(reset)──▶ running
                                   waiting {baseline}
-   ogni stato ──(Ferma)──▶ aborted · errore non recuperabile ──▶ failed
+   ogni stato ──(Ferma)──▶ aborted ──(Riprendi)──▶ stato di prima · errore non recuperabile ──▶ failed
 ```
 
 | Stato | Significato |
@@ -387,6 +389,8 @@ briefing ⇄ planned ──(approva)──▶ approved ──(prepare ok)──�
 | `integrating` | Tutti i task sono chiusi: verifica finale, push e PR (§10). |
 | `done` | PR aperta. |
 | `failed`, `aborted` | Errore non recuperabile oppure stop dell'utente. Branch e worktree restano finché l'utente non li cancella. |
+
+**Riprendi** (da `aborted`): l'entry dello stop registra lo stato, il `waitJson` e i task fermati. La missione torna dov'era: `briefing`, `planned` e `waiting` con la loro attesa, `approved` con una nuova preparazione; `running`, `paused` e `integrating` tornano `running` e lo scheduler ricava il resto. Un task fermato a metà run riparte dall'ultimo checkpoint; senza worktree torna `pending`. Non si riprende finché un run della missione si sta ancora fermando.
 
 ### 7.2 Motivi di attesa
 
@@ -753,6 +757,7 @@ Solo in-app (decisione 10). Le genera il registro: ogni `MissionEntry` con `noti
 | `POST` | `/missions/:id/baseline/retry` | Dopo `baseline`: ricalcola la base (`origin/<baseBranch>` o il branch locale) e, se è cambiata, riporta il worktree lì; poi rifà la preparazione. 409 se il worktree ha lavoro non unito. |
 | `POST` | `/missions/:id/mode` | `{ mode }`. Dalla fase 3, per missioni approvate o in corso. |
 | `POST` | `/missions/:id/abort` | Ferma il turno in corso; `aborted`. Branch e worktree restano. |
+| `POST` | `/missions/:id/resume` | Da `aborted`: torna allo stato di prima dello stop (§7.1). |
 | `DELETE` | `/missions/:id` | Nella fase 1 solo `aborted` o `approved`; dalla fase 2 le missioni finite. Cancella worktree e branch locali dei task. |
 
 Ogni azione controlla `waitJson.code` e lo stato, e risponde 409 se la missione non è più nello

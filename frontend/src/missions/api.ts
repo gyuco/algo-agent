@@ -357,6 +357,8 @@ export const missionsApi = {
     api<Mission>(`/missions/${id}/revise`, { method: 'POST' }),
   abort: (id: number) =>
     api<Mission>(`/missions/${id}/abort`, { method: 'POST' }),
+  resume: (id: number) =>
+    api<Mission>(`/missions/${id}/resume`, { method: 'POST' }),
   remove: (id: number) =>
     api<void>(`/missions/${id}`, { method: 'DELETE' }),
 

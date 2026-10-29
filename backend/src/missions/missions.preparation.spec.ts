@@ -75,10 +75,14 @@ function service(initial: Mission) {
         where,
         data,
       }: {
-        where: { id?: number; status?: string };
+        where: { id?: number; status?: string | { not: string } };
         data: Partial<Mission>;
       }) => {
-        if (where.status && state.status !== where.status) return { count: 0 };
+        const matches =
+          typeof where.status === 'object'
+            ? state.status !== where.status.not
+            : !where.status || state.status === where.status;
+        if (!matches) return { count: 0 };
         Object.assign(state, data);
         return { count: 1 };
       },
@@ -91,9 +95,19 @@ function service(initial: Mission) {
     },
     missionTask: {
       findMany: async () => [],
+      updateMany: async () => ({ count: 0 }),
       deleteMany: async () => ({ count: 0 }),
     },
     missionEntry: {
+      findMany: async ({ where }: { where: { kind?: string } }) =>
+        entries
+          .map((entry, i) => ({
+            id: i + 1,
+            kind: entry.kind,
+            dataJson: JSON.stringify(entry.data),
+          }))
+          .filter((entry) => !where.kind || entry.kind === where.kind)
+          .reverse(),
       create: async ({
         data,
       }: {
@@ -159,7 +173,7 @@ function service(initial: Mission) {
     { view: async () => ({}), hasPlanData: async () => false } as never,
     { activity: () => null } as never,
   );
-  return { missions, state, entries, queue, git, sandbox, runs };
+  return { missions, state, entries, queue, git, sandbox, runs, prisma };
 }
 
 describe('MissionsService.approve', () => {
@@ -282,6 +296,54 @@ describe('MissionsService.revise', () => {
     expect(state.branch).toBeNull();
     expect(state.worktreePath).toBeNull();
     expect(state.baseCommit).toBeNull();
+  });
+});
+
+describe('MissionsService.resume', () => {
+  it('goes back to the wait the stop interrupted', async () => {
+    const wait = { code: 'baseline', runId: 55, step: 'test' };
+    const { missions, state } = service(
+      mission({ status: 'waiting', waitJson: JSON.stringify(wait) }),
+    );
+    await missions.abort(1, 7);
+    expect(state.status).toBe('aborted');
+    expect(state.waitJson).toBeNull();
+
+    await missions.resume(1, 7);
+    expect(state.status).toBe('waiting');
+    expect(JSON.parse(state.waitJson!)).toEqual(wait);
+    expect(state.finishedAt).toBeNull();
+  });
+
+  it('queues the preparation again after a stop recorded only by its status', async () => {
+    const { missions, state, entries, queue } = service(
+      mission({ status: 'aborted', finishedAt: new Date() }),
+    );
+    entries.push(
+      { kind: 'status', data: { status: 'approved', version: 1 } },
+      { kind: 'status', data: { status: 'aborted' } },
+    );
+    await missions.resume(1, 7);
+
+    expect(state.status).toBe('approved');
+    expect(queue.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'mission-prepare', missionId: 7 }),
+    );
+  });
+
+  it('refuses while a run of the mission is still stopping', async () => {
+    const { missions, prisma } = service(mission({ status: 'aborted' }));
+    prisma.run.count = async () => 1;
+    await expect(missions.resume(1, 7)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it('refuses a mission that is not stopped', async () => {
+    const { missions } = service(mission({ status: 'running' }));
+    await expect(missions.resume(1, 7)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 });
 

@@ -808,6 +808,17 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
     });
   }
 
+  /** After a resume: a task stopped mid-run goes on from its last checkpoint. */
+  async resumeTasks(missionId: number) {
+    const tasks = await this.prisma.missionTask.findMany({
+      where: { missionId, status: 'running' },
+    });
+    for (const task of tasks) {
+      const run = await this.taskRun(task);
+      if (run?.status === 'aborted') await this.requeue(task, run);
+    }
+  }
+
   private async taskRun(task: MissionTask) {
     if (!task.runId) return null;
     return this.prisma.run.findUnique({ where: { id: task.runId } });

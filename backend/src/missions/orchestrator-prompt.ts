@@ -13,6 +13,7 @@ export function orchestratorSystemPrompt() {  return [
     'Every task needs at least one acceptance criterion, and a template among the task models enabled in the project.',
     'The integrator role is always required; add the roles the chosen templates need.',
     'Use only models and agents listed in the message.',
+    'The team is the user\'s choice: before propose_plan, ask it with ask_user once you know the templates. List each role (and any custom agent) with the agent and model you suggest, and why; offer that team as the first, recommended option and one or two alternatives with other available models. Skip the question only if the user already set the team in this briefing.',
     'Answer in the language the user writes in. Keep answers concise and use Markdown.',
   ].join('\n');
 }

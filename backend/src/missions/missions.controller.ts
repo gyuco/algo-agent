@@ -297,6 +297,21 @@ export class MissionsController {
     return this.scheduler.withLock(id, () => this.missions.abort(req.user.sub, id));
   }
 
+  @Post(':id/resume')
+  @HttpCode(HttpStatus.OK)
+  async resume(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    const mission = await this.scheduler.withLock(id, async () => {
+      const resumed = await this.missions.resume(req.user.sub, id);
+      await this.scheduler.resumeTasks(id);
+      return resumed;
+    });
+    this.scheduler.wake(id);
+    return mission;
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(
