@@ -48,15 +48,13 @@ function AgentTurn({ runId }: { runId: number }) {
   }, [runId, t])
 
   return (
-    <div className="mission-turn">
+    <div className="message assistant mission-turn">
       {tools.length > 0 && (
-        <div className="chat-tools">
+        <ul className="tools">
           {tools.map((tool, i) => (
-            <span className="badge" key={i}>
-              {tool}
-            </span>
+            <li key={i}>{tool}</li>
           ))}
-        </div>
+        </ul>
       )}
       {text ? <MessageText text={text} /> : active ? <p className="hint">{t('missions.thinking')}</p> : null}
       {error && (
@@ -134,7 +132,7 @@ export function BriefingView({ mission, entries, onChanged }: Props) {
         <h2>{t('missions.briefing')}</h2>
         <span className="badge">{t('missions.briefingHint')}</span>
       </header>
-      <div className="mission-log" ref={listRef}>
+      <div className="messages" ref={listRef}>
         {entries.map((entry) => {
           if (entry.kind === 'note') {
             const files = Array.isArray(entry.data.attachments)
@@ -144,13 +142,11 @@ export function BriefingView({ mission, entries, onChanged }: Props) {
               <div className="message user" key={entry.id}>
                 <MessageText text={String(entry.data.text ?? '')} />
                 {files.length > 0 && (
-                  <div className="chat-tools">
+                  <ul className="tools">
                     {files.map((file, i) => (
-                      <span className="badge" key={`${file.name}-${i}`}>
-                        {file.name}
-                      </span>
+                      <li key={`${file.name}-${i}`}>{file.name}</li>
                     ))}
-                  </div>
+                  </ul>
                 )}
               </div>
             )
@@ -165,10 +161,11 @@ export function BriefingView({ mission, entries, onChanged }: Props) {
               : []
             const pending = mission.wait?.entryId === entry.id
             return (
-              <div className="mission-question" key={entry.id}>
+              <div className="message assistant mission-question" key={entry.id}>
                 <MessageText text={String(entry.data.question ?? '')} />
                 {pending && options.length > 0 && (
-                  <div className="row">
+                  <div className="mission-options">
+                    <p className="hint">{t('missions.chooseOption')}</p>
                     {options.map((option) => (
                       <button
                         type="button"
@@ -193,44 +190,23 @@ export function BriefingView({ mission, entries, onChanged }: Props) {
       {canWrite && (
         <form className="composer mission-composer" onSubmit={submit}>
           {attachments.length > 0 && (
-            <div className="row">
+            <ul className="attachments">
               {attachments.map((a, i) => (
-                <span className="badge" key={`${a.name}-${i}`}>
-                  {a.name}
+                <li className="attachment" key={`${a.name}-${i}`} title={a.name}>
+                  <span className="name">{a.name}</span>
                   <button
                     type="button"
-                    className="link"
+                    className="remove"
                     aria-label={t('chat.removeAttachment', { name: a.name })}
                     onClick={() => setAttachments(attachments.filter((_, j) => j !== i))}
                   >
                     ×
                   </button>
-                </span>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-          <textarea
-            id="mission-input"
-            value={text}
-            rows={3}
-            placeholder={
-              mission.status === 'planned'
-                ? t('missions.commentPlaceholder')
-                : t('missions.answerPlaceholder')
-            }
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div className="row">
-            <button
-              type="button"
-              className="icon"
-              aria-label={t('chat.attach')}
-              title={t('chat.attach')}
-              disabled={sending || attachments.length >= MAX_ATTACHMENTS}
-              onClick={() => fileRef.current?.click()}
-            >
-              +
-            </button>
+          <div className="composer-box">
             <input
               ref={fileRef}
               type="file"
@@ -241,6 +217,27 @@ export function BriefingView({ mission, entries, onChanged }: Props) {
                 if (e.target.files) void attach(e.target.files)
                 e.target.value = ''
               }}
+            />
+            <button
+              type="button"
+              className="icon attach"
+              aria-label={t('chat.attach')}
+              title={t('chat.attach')}
+              disabled={sending || attachments.length >= MAX_ATTACHMENTS}
+              onClick={() => fileRef.current?.click()}
+            >
+              +
+            </button>
+            <textarea
+              id="mission-input"
+              value={text}
+              rows={1}
+              placeholder={
+                mission.status === 'planned'
+                  ? t('missions.commentPlaceholder')
+                  : t('missions.answerPlaceholder')
+              }
+              onChange={(e) => setText(e.target.value)}
             />
             <button type="submit" disabled={sending || (!text.trim() && !attachments.length)}>
               {t(sending ? 'missions.sending' : mission.status === 'planned' ? 'missions.comment' : 'missions.send')}

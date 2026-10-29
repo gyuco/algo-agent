@@ -2121,6 +2121,27 @@ button.icon.copy:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* A centred column, as wide as the reading needs. */
+  width: min(960px, 100%);
+  margin-inline: auto;
+}
+
+.missions > .card {
+  /* The shared card caps at 360px: centre it in the wider missions column. */
+  margin-inline: auto;
+}
+
+.missions > .card > header {
+  align-items: center;
+  gap: 1rem;
+}
+
+.missions > .card h2 {
+  margin: 0;
+}
+
+.missions > .hint {
+  text-align: center;
 }
 
 .mission-form textarea {
@@ -2154,6 +2175,9 @@ button.icon.copy:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* The same centred column as the missions list. */
+  width: min(960px, 100%);
+  margin-inline: auto;
 }
 
 .mission-header {
@@ -2173,6 +2197,41 @@ button.icon.copy:focus-visible {
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
   gap: 16px;
   align-items: start;
+}
+
+/* A briefing on its own fills the panel, like the chat: one column, no page scroll. */
+.view-panel:has(.mission-view.briefing-only) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mission-view.briefing-only {
+  flex: 1;
+  min-height: 0;
+}
+
+.mission-view.briefing-only .mission-columns {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Nothing to show beside the briefing yet. */
+.mission-view.briefing-only .mission-right {
+  display: none;
+}
+
+.mission-view.briefing-only .mission-briefing {
+  min-height: 0;
+}
+
+.mission-view.briefing-only .mission-briefing > .messages {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 @media (max-width: 1000px) {
@@ -2223,6 +2282,12 @@ button.icon.copy:focus-visible {
   min-width: 0;
 }
 
+/* The shared card caps at 360px: the briefing reads at the column's width, like the chat. */
+.mission-briefing {
+  max-width: none;
+  padding: 1rem;
+}
+
 .mission-log {
   display: flex;
   flex-direction: column;
@@ -2246,15 +2311,48 @@ button.icon.copy:focus-visible {
   gap: 8px;
 }
 
+/* The orchestrator's options: one clear, clickable row each. */
+.mission-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mission-options > .hint {
+  margin: 0;
+}
+
+.mission-options > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  text-align: left;
+  line-height: 1.35;
+  border-radius: 10px;
+}
+
+/* A ring, so the row reads as something to pick. */
+.mission-options > button::before {
+  content: '';
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+}
+
+.mission-options > button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--glass-strong);
+}
+
 .mission-composer {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.mission-composer textarea {
-  width: 100%;
-  resize: vertical;
 }
 
 .plan-facts {

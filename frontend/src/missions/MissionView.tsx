@@ -129,8 +129,11 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
   const wait = mission.wait
   const budgetVisible = ['approved', 'running', 'paused', 'waiting', 'integrating'].includes(mission.status)
 
+  // The first briefing has nothing beside it: it takes the whole panel, like the chat.
+  const briefingOnly = !withTasks && mission.status === 'briefing'
+
   return (
-    <div className="mission-view">
+    <div className={briefingOnly ? 'mission-view briefing-only' : 'mission-view'}>
       <header className="mission-header">
         <button type="button" className="secondary" onClick={onBack}>
           ← {t('missions.back')}
@@ -171,7 +174,7 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
           {actionError}
         </p>
       )}
-      <div className="mission-columns">
+      <div className={briefingOnly ? 'mission-columns briefing-only' : 'mission-columns'}>
         {withTasks ? (
           <div className="mission-left">
             <div className="row tabs">
