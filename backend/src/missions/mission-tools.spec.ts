@@ -85,6 +85,8 @@ function mission(): Mission {
     approvedAt: null,
     finishedAt: null,
     seenAt: null,
+    progressJson: '{}',
+    newProjectJson: null,
   };
 }
 
@@ -124,6 +126,7 @@ function tools(
     checks,
     scopeService,
     vault as never,
+    { diffText: async () => '' } as never,
   );
 }
 
@@ -137,6 +140,7 @@ function scope(
     scope: {
       mission: target,
       runId: 1,
+      purpose: 'briefing' as const,
       validate,
       closeTurn: () => {
         turn.closed = true;
@@ -164,6 +168,7 @@ describe('MissionTools', () => {
       { ensureSetup: async () => null, run: async () => [] } as never,
       { check: async () => [] } as never,
       { variables: async () => ({}) } as never,
+      { diffText: async () => '' } as never,
     ).forRun(state.scope);
 
     const result = await (
@@ -194,6 +199,7 @@ describe('MissionTools', () => {
       { ensureSetup: async () => null, run: async () => [] } as never,
       { check: async () => [] } as never,
       { variables: async () => ({}) } as never,
+      { diffText: async () => '' } as never,
     ).forRun(state.scope);
 
     const handler = (
@@ -221,6 +227,7 @@ describe('MissionTools', () => {
       { ensureSetup: async () => null, run: async () => [] } as never,
       { check: async () => [] } as never,
       { variables: async () => ({}) } as never,
+      { diffText: async () => '' } as never,
     ).forRun(state.scope);
     const handler = (
       built[1] as never as {

@@ -4,9 +4,27 @@ import { useI18n } from '../i18n/useI18n'
 import { runsApi, type PrepareStep } from '../runs/api'
 import { missionsApi, type Mission } from './api'
 
-const STEPS: PrepareStep[] = ['fetch', 'branch', 'worktree', 'setup', 'build', 'lint', 'test']
+const STEPS: PrepareStep[] = [
+  'create_folder',
+  'git_init',
+  'create_repo',
+  'push_base',
+  'register_project',
+  'fetch',
+  'branch',
+  'worktree',
+  'setup',
+  'build',
+  'lint',
+  'test',
+]
 
 const STEP_KEY: Record<PrepareStep, MessageKey> = {
+  create_folder: 'missions.prepareStep.create_folder',
+  git_init: 'missions.prepareStep.git_init',
+  create_repo: 'missions.prepareStep.create_repo',
+  push_base: 'missions.prepareStep.push_base',
+  register_project: 'missions.prepareStep.register_project',
   fetch: 'missions.prepareStep.fetch',
   branch: 'missions.prepareStep.branch',
   worktree: 'missions.prepareStep.worktree',

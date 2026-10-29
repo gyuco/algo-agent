@@ -23,10 +23,12 @@ export class ProjectResourcesService {
   }
 
   /** A project's switches; a resource missing from the catalog is never enabled. */
-  async isEnabled(projectId: number, catalog: Catalog): Promise<IsEnabled> {
-    const rows = await this.prisma.projectResource.findMany({
-      where: { projectId },
-    });
+  async isEnabled(projectId: number | null, catalog: Catalog): Promise<IsEnabled> {
+    // No project yet (the briefing of a new one): the catalog's defaults apply.
+    const rows =
+      projectId === null
+        ? []
+        : await this.prisma.projectResource.findMany({ where: { projectId } });
     const overrides = new Map(
       rows.map((r) => [`${r.kind}:${r.key}`, r.enabled]),
     );

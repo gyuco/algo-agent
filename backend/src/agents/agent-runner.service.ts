@@ -23,11 +23,11 @@ import { ProvidersService } from '../providers/providers.service.js';
 import { RunConfig } from '../runs/run-config.js';
 import type { AgentPolicy } from './policy.js';
 import { ProjectResourcesService } from './project-resources.service.js';
-import { trustedWorktreeCwd } from './trusted-cwd.js';
+import { trustedBriefingCwd, trustedWorktreeCwd } from './trusted-cwd.js';
 
 export interface RunRequest {
   userId: number;
-  project: { id: number; path: string };
+  project: { id: number | null; path: string };
   /** Catalog agent that answers; without one the user chats with the model directly. */
   agent?: string;
   /** An agent outside the catalog, e.g. the mission orchestrator. */
@@ -44,6 +44,8 @@ export interface RunRequest {
    * `DATA_DIR/worktrees/<projectId>`. Set by the backend only, never by input.
    */
   cwd?: string;
+  /** The mission whose briefing folder `cwd` is, for a project that doesn't exist yet. */
+  briefingMissionId?: number;
   /** Tools of this run that aren't catalog resources, e.g. the mission tools. */
   appTools?: AppToolDefinition[];
   /** What those tools know about the run. */
@@ -136,7 +138,7 @@ export class AgentRunnerService {
   }
 
   /** The agent, if it exists and is switched on in the project, with what it may use. */
-  async agentFor(userId: number, projectId: number, key: string) {
+  async agentFor(userId: number, projectId: number | null, key: string) {
     const catalog = await this.catalogService.forProject(userId, projectId);
     const agent = catalog.agents.get(key);
     const enabled = await this.resources.isEnabled(projectId, catalog);
@@ -160,7 +162,7 @@ export class AgentRunnerService {
   /** An agent that isn't in the catalog, with its own policy narrowed to the project's switches. */
   private async syntheticAgent(
     userId: number,
-    projectId: number,
+    projectId: number | null,
     agent: AgentSpec,
   ) {
     const catalog = await this.catalogService.forProject(userId, projectId);
@@ -176,7 +178,7 @@ export class AgentRunnerService {
    */
   private async directChat(
     userId: number,
-    projectId: number,
+    projectId: number | null,
     provider: AgentProvider,
   ) {
     const catalog = await this.catalogService.forProject(userId, projectId);
@@ -263,11 +265,17 @@ export class AgentRunnerService {
         ? await this.agentFor(req.userId, req.project.id, req.agent)
         : null;
     const cwd = req.cwd
-      ? await trustedWorktreeCwd(
-          await this.runConfig.resolvedDataDir(),
-          req.project.id,
-          req.cwd,
-        )
+      ? req.project.id !== null
+        ? await trustedWorktreeCwd(
+            await this.runConfig.resolvedDataDir(),
+            req.project.id,
+            req.cwd,
+          )
+        : await trustedBriefingCwd(
+            await this.runConfig.resolvedDataDir(),
+            req.briefingMissionId ?? 0,
+            req.cwd,
+          )
       : await resolveWorkspace(req.project.path, this.workspaceRoot());
     const { provider, model, sessionId } = await this.target(
       req,

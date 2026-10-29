@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConnectionsService } from '../connections/connections.service.js';
 import type { Prisma, Run } from '../generated/prisma/client.js';
+import { BudgetGuard } from '../missions/budget-guard.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { blockedBy, rateLimitedUntil, type RunSlot } from './limits.js';
 import { RunConfig } from './run-config.js';
@@ -39,6 +40,7 @@ export class RunQueueService implements BeforeApplicationShutdown {
     private readonly bus: RunEventBus,
     private readonly executor: RunExecutorService,
     private readonly connections: ConnectionsService,
+    private readonly budget: BudgetGuard,
   ) {}
 
   /** Called once recovery has closed what the previous process left running. */
@@ -129,7 +131,8 @@ export class RunQueueService implements BeforeApplicationShutdown {
       if (this.preparing.has(run.id)) continue;
       const reason =
         blockedBy(run, slots, limits) ??
-        (await this.planLimit(run, planLimits));
+        (await this.planLimit(run, planLimits)) ??
+        (await this.budgetLimit(run));
       if (reason) {
         reasons.set(run.id, reason);
         continue;
@@ -181,6 +184,21 @@ export class RunQueueService implements BeforeApplicationShutdown {
     }
     const until = cache.get(key);
     return until ? { code: 'rateLimit', until } : null;
+  }
+
+  /** The mission budget: only the kinds that spend Claude quota are gated. */
+  private async budgetLimit(run: Run): Promise<WaitReason | null> {
+    if (run.kind !== 'mission-orchestrator' && run.kind !== 'mission-task') {
+      return null;
+    }
+    if (!run.missionId) return null;
+    const gate = await this.budget.gate(run.missionId, run.model ?? undefined);
+    if (gate.ok) return null;
+    return {
+      code: 'budget',
+      kind: gate.kind,
+      ...('until' in gate && gate.until ? { until: gate.until } : {}),
+    };
   }
 
   /** Stops taking runs, then gives the running ones time to finish. */

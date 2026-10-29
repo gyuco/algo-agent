@@ -131,7 +131,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
 
   /** Queues a run that keeps the steps `run` completed and redoes the rest. */
   async resume(run: Run) {
-    const project = await this.projects.get(run.userId, run.projectId);
+    const project = await this.projects.get(run.userId, run.projectId!);
     const { workflow, writes, provider } = await this.check(
       run.userId,
       project,
@@ -162,7 +162,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
       }
     }
     const resumed = await this.queue.enqueue({
-      projectId: run.projectId,
+      projectId: run.projectId!,
       userId: run.userId,
       kind: 'workflow',
       trigger: run.trigger,
@@ -188,7 +188,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     run: Run,
     signal: AbortSignal,
   ): AsyncGenerator<RunEventData, RunOutcome> {
-    const project = await this.projects.get(run.userId, run.projectId);
+    const project = await this.projects.get(run.userId, run.projectId!);
     // Permissions as they are now, not as they were when it was queued.
     const { workflow } = await this.check(run.userId, project, run.workflow!);
     if (run.resumeOf && hashOf(workflow) !== run.workflowHash) {
@@ -295,7 +295,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     const run = await this.runsService.find(userId, runId);
     if (run.kind !== 'workflow')
       throw new NotFoundException('Passo non trovato');
-    const project = await this.projects.get(userId, run.projectId);
+    const project = await this.projects.get(userId, run.projectId!);
     const { workflow } = await this.check(userId, project, run.workflow!);
     if (hashOf(workflow) !== run.workflowHash) {
       throw new ConflictException(

@@ -167,6 +167,8 @@ async function rig() {
       missionTaskDiffKb: () => 20,
       resolvedDataDir: async () => root,
     } as never,
+    { enqueue: async () => ({ id: 99 }) } as never,
+    { queuePublish: async () => ({ id: 1 }) } as never,
   );
   return { service, mission, task, entries, base };
 }

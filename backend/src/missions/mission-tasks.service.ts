@@ -6,8 +6,16 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { RunConfig } from '../runs/run-config.js';
+import { RunQueueService } from '../runs/run-queue.service.js';
 import { listSteps, readSteps } from '../runs/run-steps.js';
+import {
+  continueBudget as addContinue,
+  readBudget,
+} from './budget-guard.service.js';
 import { GitService } from './git-service.js';
+import { MissionFlowService } from './mission-flow.service.js';
+import { resetToLastCheckpoint } from './task-checkpoints.js';
+import type { ScopeViolation } from './scope.service.js';
 import {
   missionBranchName,
   taskBranchName,
@@ -22,6 +30,10 @@ interface Wait {
   code?: string;
   taskId?: number;
   detail?: string;
+  scope?: 'mission' | 'global';
+  until?: string;
+  violations?: ScopeViolation[];
+  previous?: Record<string, unknown>;
 }
 
 /** The tasks of a mission and the user's actions on them. */
@@ -34,6 +46,8 @@ export class MissionTasksService {
     private readonly projects: ProjectsService,
     private readonly git: GitService,
     private readonly config: RunConfig,
+    private readonly queue: RunQueueService,
+    private readonly flow: MissionFlowService,
   ) {}
 
   private async find(userId: number, missionId: number, key: string) {
@@ -137,7 +151,7 @@ export class MissionTasksService {
     const branch = task.branch ?? taskBranchName(missionId, task.key);
     // The worktree is gone after the merge; the branch still holds the task's commit.
     if (!task.worktreePath) {
-      const project = await this.projects.get(userId, mission.projectId);
+      const project = await this.projects.get(userId, mission.projectId!);
       return this.git
         .diffText(project.path, task.taskBase, branch)
         .catch(() => '');
@@ -206,7 +220,7 @@ export class MissionTasksService {
         throw new ConflictException(`Merge in conflitto: ${detail}`);
       }
 
-      const project = await this.projects.get(userId, mission.projectId);
+      const project = await this.projects.get(userId, mission.projectId!);
       // The merge is done: a worktree that won't go away must not leave the task in `merging`.
       if (task.worktreePath) {
         await this.git
@@ -254,19 +268,19 @@ export class MissionTasksService {
   async redo(userId: number, missionId: number, key: string, note: string) {
     return this.scheduler.withLock(missionId, async () => {
       const { mission, task, plan } = await this.find(userId, missionId, key);
-      if (task.status !== 'review' && task.status !== 'blocked') {
+      if (!['review', 'blocked', 'scope'].includes(task.status)) {
         throw new ConflictException('Il task non si può rifare in questo stato');
       }
       // Only while the mission waits on this task: a stopped or finished mission stays as it is.
       const wait = this.wait(mission);
       if (
         mission.status !== 'waiting' ||
-        (wait?.code !== 'task_review' && wait?.code !== 'task_blocked') ||
-        wait.taskId !== task.id
+        !['task_review', 'task_blocked', 'scope'].includes(wait?.code ?? '') ||
+        wait?.taskId !== task.id
       ) {
         throw new ConflictException('La missione non aspetta questo task');
       }
-      const project = await this.projects.get(userId, mission.projectId);
+      const project = await this.projects.get(userId, mission.projectId!);
       const missionBranch =
         mission.branch ?? missionBranchName(missionId, plan.title);
       const tip = await this.git.revParse(
@@ -315,7 +329,7 @@ export class MissionTasksService {
         task.worktreePath ??
         taskWorktreePath(
           await this.config.resolvedDataDir(),
-          mission.projectId,
+          mission.projectId!,
           missionId,
           task.key,
         );
@@ -407,6 +421,363 @@ export class MissionTasksService {
     });
   }
 
+  /** "Continua": the budget gets one more allowance and the mission goes on. */
+  async continueBudget(userId: number, missionId: number) {
+    return this.scheduler.withLock(missionId, async () => {
+      const mission = await this.prisma.mission.findFirst({
+        where: { id: missionId, userId },
+      });
+      if (!mission) throw new NotFoundException('Missione non trovata');
+      const wait = this.wait(mission);
+      if (
+        mission.status !== 'waiting' ||
+        (wait?.code !== 'weekly_budget' && wait?.code !== 'usd_budget')
+      ) {
+        throw new ConflictException('La missione non aspetta il budget');
+      }
+      if (wait.code === 'weekly_budget' && wait.scope === 'global') {
+        throw new ConflictException(
+          `La quota globale si sblocca al reset settimanale${wait.until ? ` (${wait.until})` : ''}`,
+        );
+      }
+      const budget = addContinue(readBudget(mission));
+      const { count } = await this.prisma.mission.updateMany({
+        where: { id: missionId, userId, status: 'waiting' },
+        data: {
+          status: 'running',
+          waitJson: null,
+          budgetJson: JSON.stringify(budget),
+        },
+      });
+      if (!count) {
+        throw new ConflictException('La missione è cambiata: ricarica e riprova');
+      }
+      await this.missions.record(
+        missionId,
+        'resume',
+        {
+          code: wait.code,
+          weeklyAllowance: budget.weekly.allowance,
+          ...(budget.usd.allowance !== undefined
+            ? { usdAllowance: budget.usd.allowance }
+            : {}),
+        },
+        { notify: true },
+      );
+      this.scheduler.wake(missionId);
+      return this.missions.get(userId, missionId);
+    });
+  }
+
+  /** §5.1: switching mode during the mission, under the lock. */
+  async setMode(userId: number, missionId: number, mode: 'step' | 'auto') {
+    return this.scheduler.withLock(missionId, async () => {
+      const mission = await this.prisma.mission.findFirst({
+        where: { id: missionId, userId },
+      });
+      if (!mission) throw new NotFoundException('Missione non trovata');
+      if (!['running', 'paused', 'waiting'].includes(mission.status)) {
+        throw new ConflictException(
+          'La modalità si cambia solo durante la missione',
+        );
+      }
+      if (mission.mode === mode) return this.missions.get(userId, missionId);
+      const wait = this.wait(mission);
+      const implicit =
+        mode === 'auto' &&
+        mission.status === 'waiting' &&
+        wait?.code === 'task_review' &&
+        wait.taskId
+          ? await this.prisma.missionTask.findUnique({
+              where: { id: wait.taskId },
+            })
+          : null;
+      const { count } = await this.prisma.mission.updateMany({
+        where: { id: missionId, userId, status: mission.status },
+        data: {
+          mode,
+          ...(implicit ? { status: 'running', waitJson: null } : {}),
+        },
+      });
+      if (!count) {
+        throw new ConflictException('La missione è cambiata: ricarica e riprova');
+      }
+      if (implicit && implicit.status === 'review') {
+        await this.prisma.missionTask.updateMany({
+          where: { id: implicit.id, status: 'review' },
+          data: { status: 'ready', finishedAt: new Date() },
+        });
+        await this.missions.record(
+          missionId,
+          'status',
+          { status: 'ready', taskId: implicit.id, implicit: true },
+          { taskId: implicit.id },
+        );
+      }
+      await this.missions.record(missionId, 'decision', {
+        question: 'Modalità della missione',
+        chosen: mode,
+        reason:
+          mode === 'auto'
+            ? 'Passata in automatico: i task in corso finiscono e i prossimi si uniscono da soli.'
+            : 'Passata in passo-passo: il prossimo task chiuso aspetta il tuo Ok.',
+      });
+      this.scheduler.wake(missionId);
+      return this.missions.get(userId, missionId);
+    });
+  }
+
+  /** §5.7: the user accepts the perimeter violations; the plan widens and the task goes on. */
+  async acceptScope(userId: number, missionId: number) {
+    return this.scheduler.withLock(missionId, async () => {
+      const mission = await this.prisma.mission.findFirst({
+        where: { id: missionId, userId },
+      });
+      if (!mission) throw new NotFoundException('Missione non trovata');
+      const wait = this.wait(mission);
+      if (
+        mission.status !== 'waiting' ||
+        wait?.code !== 'scope' ||
+        !wait.taskId
+      ) {
+        throw new ConflictException('La missione non aspetta il perimetro');
+      }
+      const task = await this.prisma.missionTask.findUnique({
+        where: { id: wait.taskId },
+      });
+      if (!task || task.status !== 'scope') {
+        throw new ConflictException('Il task non aspetta il perimetro');
+      }
+      const parsed = mission.planJson
+        ? planSchema.safeParse(JSON.parse(mission.planJson))
+        : null;
+      if (!parsed?.success) {
+        throw new ConflictException('Il piano non è leggibile');
+      }
+      const report = this.reportOf(task.reportJson) as
+        | (TaskReport & { violations?: ScopeViolation[] })
+        | null;
+      const violations =
+        report?.violations ??
+        (wait.violations as ScopeViolation[] | undefined) ??
+        [];
+      const dependencies = [
+        ...new Set(
+          violations
+            .filter((v) => v.kind === 'dependency')
+            .map((v) => (v as { name: string }).name),
+        ),
+      ];
+      const paths = violations
+        .filter((v) => v.kind === 'path' || v.kind === 'deleted')
+        .map((v) => v.file);
+      const deletions = violations
+        .filter((v) => v.kind === 'deleted')
+        .map((v) => v.file);
+      const migrations =
+        parsed.data.scope.migrations ||
+        violations.some((v) => v.kind === 'migration');
+      const scope = {
+        ...parsed.data.scope,
+        dependencies: [...new Set([...parsed.data.scope.dependencies, ...dependencies])],
+        paths: [...new Set([...parsed.data.scope.paths, ...paths])],
+        deletions: [...new Set([...parsed.data.scope.deletions, ...deletions])],
+        migrations,
+      };
+      const plan = { ...parsed.data, scope };
+      const version = mission.planVersion + 1;
+      const { count } = await this.prisma.mission.updateMany({
+        where: {
+          id: missionId,
+          userId,
+          status: 'waiting',
+          planVersion: mission.planVersion,
+        },
+        data: {
+          planJson: JSON.stringify(plan),
+          planVersion: version,
+          approvedVersion: version,
+        },
+      });
+      if (!count) {
+        throw new ConflictException('La missione è cambiata: ricarica e riprova');
+      }
+      await this.missions.record(missionId, 'plan', { version, plan });
+      await this.missions.record(missionId, 'decision', {
+        question: 'Perimetro allargato',
+        chosen: `piano v${version}`,
+        reason: `L'utente ha accettato le violazioni di ${task.key}.`,
+        violations,
+      });
+
+      const dependency = violations.some((v) => v.kind === 'dependency');
+      if (dependency) {
+        await this.requeueScopeTask(mission, task, task.taskBase ?? '');
+      } else {
+        const status = mission.mode === 'auto' ? 'ready' : 'review';
+        await this.prisma.$transaction(async (tx) => {
+          await tx.missionTask.updateMany({
+            where: { id: task.id, status: 'scope' },
+            data: {
+              status,
+              finishedAt: status === 'ready' ? new Date() : null,
+            },
+          });
+          if (mission.mode === 'auto') {
+            await tx.mission.update({
+              where: { id: missionId },
+              data: { status: 'running', waitJson: null },
+            });
+          } else {
+            const next = { code: 'task_review', taskId: task.id };
+            await tx.mission.update({
+              where: { id: missionId },
+              data: { status: 'waiting', waitJson: JSON.stringify(next) },
+            });
+            await tx.missionEntry.create({
+              data: {
+                missionId,
+                taskId: task.id,
+                kind: 'wait',
+                dataJson: JSON.stringify(next),
+                notify: true,
+              },
+            });
+          }
+          await tx.missionEntry.create({
+            data: {
+              missionId,
+              taskId: task.id,
+              kind: 'status',
+              dataJson: JSON.stringify({ status, taskId: task.id }),
+            },
+          });
+        });
+      }
+      this.scheduler.wake(missionId);
+      return this.missions.get(userId, missionId);
+    });
+  }
+
+  /**
+   * A dependency was accepted: the task runs again from its last checkpoint,
+   * with the repeating block starting over, so `setup` installs it.
+   */
+  private async requeueScopeTask(
+    mission: { id: number; projectId: number | null; userId: number },
+    task: {
+      id: number;
+      missionId: number;
+      worktreePath: string | null;
+      taskBase: string | null;
+      key: string;
+    },
+    taskBase: string,
+  ) {
+    const run = await this.prisma.run.findFirst({
+      where: { missionTaskId: task.id },
+      orderBy: { id: 'desc' },
+    });
+    if (!run || !task.worktreePath) {
+      throw new ConflictException('Il run del task non è più disponibile');
+    }
+    const steps = readSteps(run.stepsJson);
+    // The repeating blocks start over: their rounds are not counted.
+    if (run.specJson) {
+      const graph = JSON.parse(run.specJson) as {
+        steps: { id: string; repeat?: { with: string } }[];
+      };
+      for (const step of graph.steps) {
+        if (!step.repeat) continue;
+        for (const id of [step.id, step.repeat.with]) {
+          const result = steps[id];
+          if (!result) continue;
+          result.status = 'pending';
+          result.finishedAt = null;
+          result.output = '';
+          result.costUsd = 0;
+          delete result.verdict;
+          delete result.review;
+          delete result.commands;
+          delete result.stopVerdict;
+          delete result.warning;
+          if (id === step.id) delete result.iterations;
+        }
+      }
+    }
+    await resetToLastCheckpoint(this.git, task.worktreePath, steps, taskBase);
+    const kept = Object.fromEntries(
+      Object.entries(steps).filter(([, s]) => s.status === 'done'),
+    );
+    await this.queue.enqueue(
+      {
+        projectId: run.projectId,
+        userId: run.userId,
+        kind: 'mission-task',
+        title: run.title,
+        input: run.input,
+        missionId: task.missionId,
+        missionTaskId: task.id,
+        specJson: run.specJson,
+        stepsJson: JSON.stringify(kept),
+        writes: false,
+        resumeOf: run.id,
+      },
+      async (created) => {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.missionTask.updateMany({
+            where: { id: task.id, status: 'scope' },
+            data: { status: 'running', runId: created.id, finishedAt: null },
+          });
+          await tx.mission.update({
+            where: { id: mission.id },
+            data: { status: 'running', waitJson: null },
+          });
+          await tx.missionEntry.create({
+            data: {
+              missionId: mission.id,
+              taskId: task.id,
+              kind: 'status',
+              dataJson: JSON.stringify({
+                status: 'running',
+                taskId: task.id,
+                runId: created.id,
+                reason: 'scope',
+              }),
+            },
+          });
+        });
+      },
+    );
+  }
+
+  /** §6.3: after `publish`, the push and the pull request again. */
+  async retryPublish(userId: number, missionId: number) {
+    return this.scheduler.withLock(missionId, async () => {
+      const mission = await this.prisma.mission.findFirst({
+        where: { id: missionId, userId },
+      });
+      if (!mission) throw new NotFoundException('Missione non trovata');
+      const wait = this.wait(mission);
+      if (mission.status !== 'waiting' || wait?.code !== 'publish') {
+        throw new ConflictException('La missione non aspetta la pubblicazione');
+      }
+      const { count } = await this.prisma.mission.updateMany({
+        where: { id: missionId, userId, status: 'waiting' },
+        data: { status: 'integrating', waitJson: null },
+      });
+      if (!count) {
+        throw new ConflictException('La missione è cambiata: ricarica e riprova');
+      }
+      await this.missions.record(missionId, 'status', {
+        status: 'integrating',
+        retry: true,
+      });
+      await this.flow.queuePublish({ ...mission, status: 'integrating' });
+      return this.missions.get(userId, missionId);
+    });
+  }
+
   /** Riprova: the full checks of the mission again. */
   async retryFinalChecks(userId: number, missionId: number) {
     return this.scheduler.withLock(missionId, async () => {
@@ -482,7 +853,7 @@ export class MissionTasksService {
     title: string;
   }) {
     const project = await this.prisma.project.findUnique({
-      where: { id: mission.projectId },
+      where: { id: mission.projectId! },
       select: { path: true },
     });
     if (!project) return;
@@ -493,7 +864,7 @@ export class MissionTasksService {
     for (const task of tasks) {
       const worktree =
         task.worktreePath ??
-        taskWorktreePath(dataDir, mission.projectId, mission.id, task.key);
+        taskWorktreePath(dataDir, mission.projectId!, mission.id, task.key);
       await this.git.removeWorktree(project.path, worktree).catch(() => undefined);
       await this.git
         .deleteBranch(

@@ -130,7 +130,7 @@ export class ChatService implements RunHandler, OnModuleInit {
     run: Run,
     signal: AbortSignal,
   ): AsyncGenerator<RunEventData, RunOutcome> {
-    const project = await this.projects.get(run.userId, run.projectId);
+    const project = await this.projects.get(run.userId, run.projectId!);
     let outcome: RunOutcome = 'done';
     for await (const event of this.runner.run({
       userId: run.userId,

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConnectionsModule } from '../connections/connections.module.js';
+import { BudgetModule } from '../missions/budget.module.js';
 import { RunConfig } from './run-config.js';
 import { RunEventBus } from './run-event-bus.js';
 import { RunExecutorService } from './run-executor.service.js';
@@ -13,7 +14,7 @@ import { RunsService } from './runs.service.js';
 
 /** Background runs: queue, executor, event log and the routes to follow them. */
 @Module({
-  imports: [ConnectionsModule],
+  imports: [ConnectionsModule, BudgetModule],
   controllers: [RunsController],
   providers: [
     RunConfig,
@@ -34,6 +35,7 @@ import { RunsService } from './runs.service.js';
     RunQueueService,
     RunFiles,
     RunsService,
+    RunExecutorService,
   ],
 })
 export class RunsModule {}

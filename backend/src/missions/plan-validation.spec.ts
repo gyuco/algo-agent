@@ -336,6 +336,29 @@ describe('planSchema', () => {
     );
   });
 
+  it('counts only agent steps, and repeat multiplies its step and check only', async () => {
+    const result = await validation.validate(
+      1,
+      project,
+      plan(),
+      await catalog(),
+      enabled(),
+    );
+    expect(result.sessions).toBe(7);
+  });
+
+  it('refuses task-tdd in the first milestone of a new project', async () => {
+    const result = await validation.validate(
+      1,
+      { id: null, path: '/tmp/briefing' },
+      plan(),
+      await catalog(),
+      enabled(),
+    );
+    expect(result.errors.join('\n')).toMatch(/task-tdd vuole test già esistenti/);
+    expect(result.errors.join('\n')).toMatch(/deve essere lo scaffolding/);
+  });
+
   it('keeps every path of the plan inside the project', () => {
     const base = plan();
     for (const bad of ['../other', '/etc', '~/x', 'a/../../b', 'C:\\x']) {

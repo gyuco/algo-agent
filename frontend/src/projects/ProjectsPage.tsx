@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useI18n } from '../i18n/useI18n'
+import { missionsApi, type Mission } from '../missions/api'
 import { projectsApi, type Project } from './api'
+import { NewProjectDialog } from './NewProjectDialog'
 import { PathPicker } from './PathPicker'
 
 type Editing = { id: number | null; name: string; path: string }
@@ -14,11 +16,17 @@ export function ProjectsPage() {
   const [saving, setSaving] = useState(false)
   const [picking, setPicking] = useState(false)
   const [deleting, setDeleting] = useState<Project | null>(null)
+  const [creatingMission, setCreatingMission] = useState(false)
+  const [preparing, setPreparing] = useState<Mission[]>([])
 
   useEffect(() => {
     projectsApi.list().then(setProjects, (err: unknown) =>
       setError(err instanceof Error ? err.message : t('projects.loadError')),
     )
+    void missionsApi
+      .list()
+      .then((list) => setPreparing(list.filter((mission) => mission.projectId === null)))
+      .catch(() => undefined)
   }, [t])
 
   function startEdit(project?: Project) {
@@ -70,7 +78,14 @@ export function ProjectsPage() {
     <section className="card projects" aria-labelledby="projects-title">
       <div className="chat-head">
         <h1 id="projects-title">{t('projects.title')}</h1>
-        {!editing && <button onClick={() => startEdit()}>{t('projects.new')}</button>}
+        <div className="row">
+          {!editing && (
+            <button type="button" className="secondary" onClick={() => setCreatingMission(true)}>
+              {t('projects.newMission')}
+            </button>
+          )}
+          {!editing && <button onClick={() => startEdit()}>{t('projects.new')}</button>}
+        </div>
       </div>
 
       {editing && (
@@ -114,6 +129,35 @@ export function ProjectsPage() {
             </button>
           </div>
         </form>
+      )}
+
+      {creatingMission && (
+        <NewProjectDialog
+          onClose={() => setCreatingMission(false)}
+          onCreated={() => {
+            setCreatingMission(false)
+            window.location.hash = '#/activity'
+          }}
+        />
+      )}
+
+      {preparing.length > 0 && (
+        <section>
+          <h2>{t('projects.preparing')}</h2>
+          <ul className="activity-list">
+            {preparing.map((mission) => (
+              <li key={mission.id} className="activity-item">
+                <div className="activity-main">
+                  <span className="activity-title">{mission.title}</span>
+                  <small>{mission.status}</small>
+                </div>
+                <a className="button secondary" href="#/activity">
+                  {t('activity.open')}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {picking && editing && (

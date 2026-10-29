@@ -33,6 +33,25 @@ function secretName(name: string) {
   return name;
 }
 
+/** The forges a new project can be created on: only the names, never the values (§8.5). */
+@Controller('vault')
+export class VaultForgeController {
+  constructor(private readonly vault: VaultService) {}
+
+  @Get('forges')
+  async forges(@Req() req: AuthenticatedRequest) {
+    const names = new Set(
+      (await this.vault.list(req.user.sub, null)).map((secret) => secret.name),
+    );
+    return {
+      forges: [
+        ...(names.has('GITHUB_TOKEN') ? ['github'] : []),
+        ...(names.has('GITLAB_TOKEN') ? ['gitlab'] : []),
+      ],
+    };
+  }
+}
+
 /** The user's own secrets, seen by all their projects. */
 @Controller('secrets')
 export class UserVaultController {

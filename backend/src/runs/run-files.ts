@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { UserAttachment } from '../providers/provider.js';
 import { RunConfig } from './run-config.js';
@@ -71,5 +71,33 @@ export class RunFiles {
 
   async remove(runId: number) {
     await rm(this.file(runId), { force: true });
+  }
+
+  /** Forgets a conversation's attachments when the conversation goes away. */
+  async removeSession(sessionId: string) {
+    await rm(this.sessionFile(sessionId), { force: true });
+  }
+
+  /**
+   * Deletes the attachment files not touched since `before`: runs of finished
+   * turns clean their own, but conversations' copies would stay forever.
+   */
+  async cleanUp(before: Date) {
+    for (const dir of [this.dir(), join(this.config.dataDir(), 'session-attachments')]) {
+      let names: string[];
+      try {
+        names = await readdir(dir);
+      } catch {
+        // The folder never existed: nothing to clean.
+        continue;
+      }
+      for (const name of names) {
+        const file = join(dir, name);
+        const info = await stat(file).catch(() => null);
+        if (info?.isFile() && info.mtime < before) {
+          await rm(file, { force: true }).catch(() => undefined);
+        }
+      }
+    }
   }
 }

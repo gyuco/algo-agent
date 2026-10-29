@@ -96,8 +96,25 @@ describe('graph engine run steps', () => {
     expect(steps.red.status).toBe('done');
   });
 
-  it('warns when tests already pass in a red step', async () => {
+  it('fails a red step on a perimeter violation even though it expects a failure', async () => {
     const { graph, steps } = rig(
+      {},
+      {
+        commands: {
+          red: {
+            ok: false,
+            results: [result('test', false, 'fuori perimetro')],
+            violation: true,
+          },
+        },
+      },
+    );
+    const outcome = await graph([{ id: 'red', run: ['test'], expect: 'fail' }]);
+    expect(outcome).toBe('failed');
+    expect(steps.red.status).toBe('failed');
+  });
+
+  it('warns when tests already pass in a red step', async () => {    const { graph, steps } = rig(
       {},
       {
         commands: {

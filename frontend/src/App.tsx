@@ -15,6 +15,7 @@ import { useConnections, type ConnectionsState } from './connections/useConnecti
 import { ActivityBadge } from './runs/ActivityBadge'
 import { ActivityPage } from './runs/ActivityPage'
 import { useActiveRuns, type ActiveRunsState } from './runs/useActiveRuns'
+import { useMissionNotifications } from './missions/useMissionNotifications'
 
 type Page =
   | { name: 'home' }
@@ -60,12 +61,14 @@ function AppHeader({
   page,
   connections,
   runs,
+  missions,
   email,
   onLogout,
 }: {
   page: Page
   connections: ConnectionsState
   runs: ActiveRunsState
+  missions: number
   email: string
   onLogout: () => void
 }) {
@@ -109,7 +112,7 @@ function AppHeader({
       </nav>
       <div className="header-actions">
         <ConnectionsBadge state={connections} />
-        <ActivityBadge state={runs} />
+        <ActivityBadge state={runs} missions={missions} />
         <label className="language" title={t('language.label')}>
           <svg
             viewBox="0 0 24 24"
@@ -147,6 +150,7 @@ function App() {
   const page = usePage()
   const connections = useConnections(Boolean(user))
   const runs = useActiveRuns(Boolean(user))
+  const missions = useMissionNotifications(Boolean(user))
   const { t } = useI18n()
 
   if (loading) return <main className="auth">{t('app.loading')}</main>
@@ -158,6 +162,7 @@ function App() {
         page={page}
         connections={connections}
         runs={runs}
+        missions={missions.unread}
         email={user.email}
         onLogout={logout}
       />
@@ -165,7 +170,9 @@ function App() {
         {page.name === 'projects' && <ProjectsPage />}
         {page.name === 'resources' && <LibraryPage />}
         {page.name === 'connections' && <ConnectionsPage state={connections} />}
-        {page.name === 'activity' && <ActivityPage state={runs} />}
+        {page.name === 'activity' && (
+          <ActivityPage state={runs} missions={missions.unread} notify={missions.request} />
+        )}
         {page.name === 'profile' && <ProfilePage />}
         {page.name === 'workspace' && (
           <ProjectWorkspace

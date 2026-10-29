@@ -17,15 +17,25 @@ import { RunQueueService } from '../runs/run-queue.service.js';
 import { readSteps } from '../runs/run-steps.js';
 import { ACTIVE_STATUSES } from '../runs/run-types.js';
 import { VaultService } from '../vault/vault.service.js';
-import { ChecksService, type CheckResult } from './checks.service.js';
-import { GitService } from './git-service.js';
 import {
-  missionBranchName,
-  taskBranchName,
-  taskWorktreePath,
-} from './mission-paths.js';
+  BudgetGuard,
+  type BudgetGate,
+} from './budget-guard.service.js';
+import { ChecksService } from './checks.service.js';
+import { GitService } from './git-service.js';
+import { MissionEventBus } from './mission-event-bus.js';
+import { MissionFlowService } from './mission-flow.service.js';
+import {
+  currentMilestone,
+  needsMet,
+  readProgress,
+} from './mission-progress.js';
+import { taskBranchName, taskWorktreePath } from './mission-paths.js';
 import { MissionsService } from './missions.service.js';
 import { planSchema, planTasks, type Plan, type PlanTask } from './plan-schema.js';
+import {
+  resetToLastCheckpoint,
+} from './task-checkpoints.js';
 import {
   TaskGraphFactory,
   type Dependency,
@@ -34,8 +44,6 @@ import {
 } from './task-graph.factory.js';
 
 const TICK_MS = 30_000;
-const DETAIL_LINES = 5;
-const DETAIL_LENGTH = 500;
 
 /** A mission's scheduler lock, in memory: one instance, like the event bus. */
 class Lock {
@@ -52,18 +60,6 @@ class Lock {
       release();
     }
   }
-}
-
-function detailOf(result: CheckResult) {
-  const detail = result.output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, DETAIL_LINES)
-    .join('\n')
-    .slice(0, DETAIL_LENGTH);
-  if (result.timedOut) return ['Timeout del comando', detail].filter(Boolean).join('\n');
-  return detail || `Exit code ${result.exitCode ?? 'sconosciuto'}`;
 }
 
 function message(error: unknown) {
@@ -92,6 +88,9 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
     private readonly vault: VaultService,
     private readonly factory: TaskGraphFactory,
     private readonly missions: MissionsService,
+    private readonly budget: BudgetGuard,
+    private readonly flow: MissionFlowService,
+    private readonly bus: MissionEventBus,
   ) {}
 
   onApplicationBootstrap() {
@@ -210,29 +209,64 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
         await this.blockTask(mission.id, task.id, 'error', 'Il run del task è terminato senza chiuderlo');
       }
     }
-    if (taskRuns.length) return;
+    if (await this.flow.busy(mission.id)) return;
+    // Step by step runs one task at a time. Automatic mode goes on while tasks
+    // run: it merges the ready ones and fills the free slots. A task left in
+    // `merging` by a crash is settled by both.
+    if (
+      mission.mode !== 'auto' &&
+      taskRuns.some(({ task }) => task.status !== 'merging')
+    ) {
+      return;
+    }
 
     const taskRows = await this.prisma.missionTask.findMany({
       where: { missionId },
     });
+    if (mission.mode === 'auto') {
+      await this.autoPass(mission, plan, taskRows);
+    } else {
+      await this.stepPass(mission, plan, taskRows);
+    }
+  }
+
+  /** §5.1: step by step, one task at a time, and the user's Ok before each merge. */
+  private async stepPass(mission: Mission, plan: Plan, taskRows: MissionTask[]) {
     const byKey = new Map(taskRows.map((t) => [t.key, t]));
     const ordered = planTasks(plan)
       .map((t) => byKey.get(t.key))
       .filter((t): t is MissionTask => Boolean(t));
+    const planned = (key: string) => planTasks(plan).find((t) => t.key === key)!;
+    const status = new Map(taskRows.map((t) => [t.key, t.status]));
+
+    // Tasks queued for a merge before switching to step by step are merged.
+    const merging = taskRows.find((t) => t.status === 'merging');
+    if (merging) {
+      await this.recoverMerge(mission, plan, merging);
+      return;
+    }
+    const ready = taskRows
+      .filter((t) => t.status === 'ready')
+      .sort(
+        (a, b) =>
+          (a.finishedAt?.getTime() ?? 0) - (b.finishedAt?.getTime() ?? 0) ||
+          a.id - b.id,
+      );
+    if (ready.length) {
+      await this.mergeTask(mission, plan, ready[0]);
+      return;
+    }
 
     const pending = ordered.find(
-      (task) =>
-        task.status === 'pending' &&
-        planTasks(plan)
-          .find((t) => t.key === task.key)!
-          .needs.every((need) => {
-            const status = byKey.get(need)?.status;
-            return status === 'done' || status === 'skipped';
-          }),
+      (task) => task.status === 'pending' && needsMet(planned(task.key), status),
     );
     if (pending) {
-      const planTask = planTasks(plan).find((t) => t.key === pending.key)!;
-      await this.start(mission, plan, planTask, pending);
+      const gate = await this.budget.gate(mission.id, this.modelOf(plan));
+      if (!gate.ok) {
+        await this.budgetWait(mission, gate);
+        return;
+      }
+      await this.start(mission, plan, planned(pending.key), pending);
       return;
     }
 
@@ -242,42 +276,364 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
     if (open.length) {
       const blocked =
         open.find((t) => t.status === 'blocked') ??
+        open.find((t) => t.status === 'scope') ??
         open
           .map((t) =>
-            planTasks(plan)
-              .find((p) => p.key === t.key)!
-              .needs.map((need) => byKey.get(need))
-              .find((need) => need?.status === 'blocked'),
+            planned(t.key).needs
+              .map((need) => byKey.get(need))
+              .find((need) => need?.status === 'blocked' || need?.status === 'scope'),
           )
           .find((need): need is MissionTask => Boolean(need)) ??
         open[0];
-      const wait = { code: 'task_blocked', taskId: blocked.id };
-      const { count } = await this.prisma.mission.updateMany({
-        where: { id: mission.id, status: 'running' },
-        data: { status: 'waiting', waitJson: JSON.stringify(wait) },
-      });
-      if (count) {
-        await this.missions.record(
+      await this.waitTask(mission, blocked);
+      return;
+    }
+
+    await this.flow.queueChecks(mission, 'final');
+  }
+
+  /** §5.1: automatic mode runs a milestone in parallel, merges its tasks, then reviews it. */
+  private async autoPass(
+    mission: Mission,
+    plan: Plan,
+    taskRows: MissionTask[],
+  ) {
+    const byKey = new Map(taskRows.map((t) => [t.key, t]));
+    const planned = (key: string) => planTasks(plan).find((t) => t.key === key)!;
+    const status = new Map(taskRows.map((t) => [t.key, t.status]));
+    const progress = readProgress(mission);
+
+    // One merge at a time, in the order the tasks finished.
+    const merging = taskRows.find((t) => t.status === 'merging');
+    if (merging) {
+      await this.recoverMerge(mission, plan, merging);
+      return;
+    }
+    const ready = taskRows
+      .filter((t) => t.status === 'ready')
+      .sort(
+        (a, b) =>
+          (a.finishedAt?.getTime() ?? 0) - (b.finishedAt?.getTime() ?? 0) ||
+          a.id - b.id,
+      );
+    if (ready.length) {
+      await this.mergeTask(mission, plan, ready[0]);
+      return;
+    }
+
+    const current = currentMilestone(plan, taskRows, progress);
+    if (!current) {
+      await this.flow.queueChecks(mission, 'final');
+      return;
+    }
+    const inMilestone = taskRows.filter((t) => t.milestone === current.id);
+    const open = inMilestone.filter(
+      (t) => t.status !== 'done' && t.status !== 'skipped',
+    );
+
+    // The milestone is over: its checks, then the orchestrator's review.
+    if (!open.length) {
+      if (!progress.reviewedMilestones.includes(current.id)) {
+        const checked = await this.lastChecks(mission.id, current.id, inMilestone);
+        if (!checked) {
+          await this.flow.queueChecks(mission, 'milestone', {
+            milestone: current.id,
+          });
+          return;
+        }
+        await this.flow.reviewMilestone(mission.id, current.id, checked);
+      }
+      return;
+    }
+
+    const running = inMilestone.filter((t) => t.status === 'running').length;
+    const globalRunning = await this.prisma.run.count({
+      where: {
+        kind: 'mission-task',
+        status: { in: ['running', 'queued'] },
+      },
+    });
+    let slots = Math.min(
+      plan.parallelTasks - running,
+      this.config.limits().missionTasks - globalRunning,
+    );
+    if (slots <= 0) return;
+
+    const runnable = planTasks(plan)
+      .filter((task) => task.milestone === current.id)
+      .map((task) => byKey.get(task.key))
+      .filter(
+        (task): task is MissionTask =>
+          Boolean(
+            task &&
+              task.status === 'pending' &&
+              needsMet(planned(task.key), status),
+          ),
+      );
+    let started = 0;
+    for (const task of runnable) {
+      if (slots <= 0) break;
+      const gate = await this.budget.gate(mission.id, this.modelOf(plan));
+      if (!gate.ok) {
+        await this.budgetWait(mission, gate);
+        return;
+      }
+      await this.start(mission, plan, planned(task.key), task);
+      slots -= 1;
+      started += 1;
+    }
+    if (started || running > 0) return;
+
+    // Nothing starts and nothing runs: a block stops its dependents, not the mission.
+    const stopped =
+      open.find((t) => t.status === 'blocked' || t.status === 'scope') ??
+      open
+        .map((t) =>
+          planned(t.key).needs
+            .map((need) => byKey.get(need))
+            .find((need) => need?.status === 'blocked' || need?.status === 'scope'),
+        )
+        .find((need): need is MissionTask => Boolean(need)) ??
+      open[0];
+    await this.waitTask(mission, stopped);
+  }
+
+  /**
+   * The latest checks entry of a milestone, as the review turn receives it.
+   * Checks older than the last task closed (a corrective one) don't count.
+   */
+  private async lastChecks(
+    missionId: number,
+    milestone: string,
+    tasks: MissionTask[],
+  ) {
+    const entry = await this.prisma.missionEntry.findFirst({
+      where: {
+        missionId,
+        kind: 'checks',
+        dataJson: { contains: `"milestone":"${milestone}"` },
+      },
+      orderBy: { id: 'desc' },
+    });
+    if (!entry) return null;
+    const lastClosed = Math.max(
+      0,
+      ...tasks.map((task) => task.finishedAt?.getTime() ?? 0),
+    );
+    if (entry.createdAt.getTime() < lastClosed) return null;
+    const data = JSON.parse(entry.dataJson) as {
+      ok?: boolean;
+      results?: { name: string; ok: boolean; exitCode: number | null; durationMs: number }[];
+    };
+    return { ok: data.ok ?? false, results: data.results ?? [] };
+  }
+
+  /** §5.1: the mission waits only when nothing runs, no merge is queued and nothing can start. */
+  private async waitTask(mission: Mission, task: MissionTask) {
+    const scope =
+      task.status === 'scope' && task.reportJson
+        ? (JSON.parse(task.reportJson) as { violations?: unknown }).violations
+        : undefined;
+    const wait =
+      task.status === 'scope'
+        ? { code: 'scope', taskId: task.id, violations: scope }
+        : { code: 'task_blocked', taskId: task.id };
+    const { count } = await this.prisma.mission.updateMany({
+      where: { id: mission.id, status: 'running' },
+      data: { status: 'waiting', waitJson: JSON.stringify(wait) },
+    });
+    if (!count) return;
+    await this.missions.record(mission.id, 'wait', wait, {
+      taskId: task.id,
+      notify: true,
+    });
+  }
+
+  /** §5.3: a clean merge ends the task; a conflict stays open for the integrator. */
+  private async mergeTask(
+    mission: Mission,
+    plan: Plan,
+    task: MissionTask,
+  ) {
+    if (!mission.worktreePath) {
+      await this.blockTask(mission.id, task.id, 'error', 'Il worktree della missione manca');
+      return;
+    }
+    const branch = task.branch ?? taskBranchName(mission.id, task.key);
+    const title =
+      planTasks(plan).find((t) => t.key === task.key)?.title ?? task.key;
+    const { count } = await this.prisma.missionTask.updateMany({
+      where: { id: task.id, status: 'ready' },
+      data: { status: 'merging' },
+    });
+    if (!count) return;
+    await this.missions.record(
+      mission.id,
+      'status',
+      { status: 'merging', taskId: task.id },
+      { taskId: task.id },
+    );
+
+    try {
+      await this.git.merge(
+        mission.worktreePath,
+        branch,
+        `Merge task ${task.key}: ${title}`,
+      );
+    } catch {
+      // The merge stays open: the integrator resolves it in the mission's worktree.
+      try {
+        await this.queue.enqueue({
+          projectId: mission.projectId!,
+          userId: mission.userId,
+          kind: 'mission-integrate',
+          title: `${mission.title} · ${task.key}`,
+          input: JSON.stringify({ taskId: task.id }),
+          missionId: mission.id,
+          missionTaskId: task.id,
+          writes: false,
+        });
+      } catch (error) {
+        await this.git.abortMerge(mission.worktreePath);
+        await this.blockTask(
           mission.id,
-          'wait',
-          wait,
-          { taskId: blocked.id, notify: true },
+          task.id,
+          'error',
+          `Integratore non avviato: ${message(error)}`,
         );
       }
       return;
     }
 
-    await this.finalChecks(mission, plan);
+    const project = await this.projects.get(mission.userId, mission.projectId!);
+    if (task.worktreePath) {
+      await this.git
+        .removeWorktree(project.path, task.worktreePath)
+        .catch(() => undefined);
+    }
+    const { count: moved } = await this.prisma.missionTask.updateMany({
+      where: { id: task.id, status: 'merging' },
+      data: { status: 'done', finishedAt: new Date(), worktreePath: null },
+    });
+    if (!moved) return;
+    const progress = readProgress(mission);
+    const queue = (progress.mergeQueue ?? []).filter((id) => id !== task.id);
+    await this.prisma.mission.update({
+      where: { id: mission.id },
+      data: { progressJson: JSON.stringify({ ...progress, mergeQueue: queue }) },
+    });
+    await this.missions.record(
+      mission.id,
+      'status',
+      { status: 'done', taskId: task.id },
+      { taskId: task.id },
+    );
+  }
+
+  /** A merge left open by a crash: conflicts go to the integrator, otherwise it is settled. */
+  private async recoverMerge(
+    mission: Mission,
+    plan: Plan,
+    task: MissionTask,
+  ) {
+    if (!mission.worktreePath) return;
+    const conflicts = await this.git.conflicts(mission.worktreePath).catch(() => []);
+    if (conflicts.length) {
+      await this.queue
+        .enqueue({
+          projectId: mission.projectId!,
+          userId: mission.userId,
+          kind: 'mission-integrate',
+          title: `${mission.title} · ${task.key}`,
+          input: JSON.stringify({ taskId: task.id }),
+          missionId: mission.id,
+          missionTaskId: task.id,
+          writes: false,
+        })
+        .catch(() => undefined);
+      return;
+    }
+    const branch = task.branch ?? taskBranchName(mission.id, task.key);
+    const merged = await this.git
+      .aheadOfRef(mission.worktreePath, 'HEAD', branch)
+      .catch(() => 0);
+    if (!merged) {
+      await this.blockTask(
+        mission.id,
+        task.id,
+        'error',
+        `Il merge di ${task.key} è aperto senza conflitti`,
+      );
+      return;
+    }
+    // The merge went through before the crash: close the task as a clean merge.
+    const project = await this.projects.get(mission.userId, mission.projectId!);
+    if (task.worktreePath) {
+      await this.git
+        .removeWorktree(project.path, task.worktreePath)
+        .catch(() => undefined);
+    }
+    const { count } = await this.prisma.missionTask.updateMany({
+      where: { id: task.id, status: 'merging' },
+      data: { status: 'done', finishedAt: new Date(), worktreePath: null },
+    });
+    if (count) {
+      await this.missions.record(
+        mission.id,
+        'status',
+        { status: 'done', taskId: task.id, recovered: true },
+        { taskId: task.id },
+      );
+    }
+    void plan;
   }
 
   /** Starts one task: branch, worktree, setup, graph, run. */
+  /** The model the first agent of a task will use: the implementer role, or the orchestrator's. */
+  private modelOf(plan: Plan) {
+    return plan.team.roles.implementer?.model ?? plan.team.orchestrator;
+  }
+
+  /** §2.5: the mission stops where the gate says, and the log says why. */
+  private async budgetWait(
+    mission: Mission,
+    gate: Exclude<BudgetGate, { ok: true }>,
+  ) {
+    const until = 'until' in gate ? gate.until : undefined;
+    const pause = gate.kind === 'five_hour' || gate.kind === 'model_window';
+    const wait =
+      gate.kind === 'five_hour' || gate.kind === 'model_window'
+        ? {
+            code: gate.kind,
+            ...(until ? { until } : {}),
+            ...(gate.kind === 'model_window' ? { window: gate.window } : {}),
+          }
+        : gate.kind === 'weekly_mission' || gate.kind === 'weekly_global'
+          ? {
+              code: 'weekly_budget',
+              scope:
+                gate.kind === 'weekly_global' ? 'global' : ('mission' as const),
+              ...(until ? { until } : {}),
+            }
+          : { code: 'usd_budget' };
+    const { count } = await this.prisma.mission.updateMany({
+      where: { id: mission.id, status: 'running' },
+      data: {
+        status: pause ? 'paused' : 'waiting',
+        waitJson: JSON.stringify(wait),
+      },
+    });
+    if (!count) return;
+    await this.missions.record(mission.id, 'budget', wait, { notify: true });
+  }
+
   private async start(
     mission: Mission,
     plan: Plan,
     planTask: PlanTask & { milestone: string },
     task: MissionTask,
   ) {
-    const project = await this.projects.get(mission.userId, mission.projectId);
+    const project = await this.projects.get(mission.userId, mission.projectId!);
     const missionTip =
       (mission.worktreePath
         ? await this.git.revParse(mission.worktreePath, 'HEAD')
@@ -291,7 +647,7 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
     const dataDir = await this.config.resolvedDataDir();
     const worktree =
       task.worktreePath ??
-      taskWorktreePath(dataDir, mission.projectId, mission.id, task.key);
+      taskWorktreePath(dataDir, mission.projectId!, mission.id, task.key);
 
     try {
       const existing = await this.git.revParse(
@@ -372,7 +728,7 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
     // while the queue still holds it back.
     await this.queue.enqueue(
       {
-        projectId: mission.projectId,
+        projectId: mission.projectId!,
         userId: mission.userId,
         kind: 'mission-task',
         title: `${mission.title} · ${task.key}`,
@@ -418,9 +774,9 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
   private async context(mission: Mission) {
     const catalog = await this.catalogService.forProject(
       mission.userId,
-      mission.projectId,
+      mission.projectId!,
     );
-    const enabled = await this.resources.isEnabled(mission.projectId, catalog);
+    const enabled = await this.resources.isEnabled(mission.projectId!, catalog);
     return { catalog, enabled };
   }
 
@@ -465,12 +821,7 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
       const kept = Object.fromEntries(
         Object.entries(steps).filter(([, s]) => s.status === 'done'),
       );
-      const checkpoint =
-        Object.values(steps)
-          .map((s) => s.checkpoint)
-          .filter((c): c is string => Boolean(c))
-          .at(-1) ?? task.taskBase;
-      if (checkpoint) await this.git.resetTo(task.worktreePath, checkpoint);
+      await resetToLastCheckpoint(this.git, task.worktreePath, steps, task.taskBase ?? '');
       await this.queue.enqueue(
         {
           projectId: run.projectId,
@@ -514,6 +865,10 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
       blocked: { reason, detail },
       summary: '',
     };
+    const last = await this.prisma.missionEntry.aggregate({
+      where: { missionId },
+      _max: { id: true },
+    });
     await this.prisma.$transaction(async (tx) => {
       const moved = await tx.missionTask.updateMany({
         where: { id: taskId, status: { in: ['pending', 'running'] } },
@@ -543,76 +898,13 @@ export class MissionScheduler implements OnApplicationBootstrap, OnApplicationSh
         },
       });
     });
+    const rows = await this.prisma.missionEntry.findMany({
+      where: { missionId, id: { gt: last._max.id ?? 0 } },
+      orderBy: { id: 'asc' },
+    });
+    for (const row of rows) this.bus.publish(row);
   }
 
-  /** The full checks of the mission's worktree, then `done` or `final_checks`. */
-  private async finalChecks(mission: Mission, plan: Plan) {
-    const wait = mission.waitJson
-      ? (JSON.parse(mission.waitJson) as { code?: string })
-      : null;
-    if (mission.status === 'waiting' && wait?.code === 'final_checks') return;
-    if (!mission.worktreePath) {
-      await this.blockFinal(mission, 'Il worktree della missione manca');
-      return;
-    }
-    const all = await this.vault.variables(mission.userId, mission.projectId);
-    const secrets = Object.fromEntries(
-      plan.checks.secrets
-        .filter((name) => name in all)
-        .map((name) => [name, all[name]]),
-    );
-    const names = (['setup', 'build', 'lint', 'test'] as const).filter(
-      (name) => name === 'test' || plan.checks[name],
-    );
-    let results: CheckResult[];
-    try {
-      results = await this.checks.run({
-        runId: undefined,
-        projectId: mission.projectId,
-        worktree: mission.worktreePath,
-        plan,
-        names: [...names],
-        secrets,
-        signal: new AbortController().signal,
-      });
-    } catch (error) {
-      await this.blockFinal(mission, message(error));
-      return;
-    }
-    const failed = results.find((r) => !r.ok);
-    if (failed) {
-      await this.blockFinal(mission, detailOf(failed));
-      return;
-    }
-    const branch = mission.branch ?? missionBranchName(mission.id, plan.title);
-    const { count } = await this.prisma.mission.updateMany({
-      where: { id: mission.id, status: 'running' },
-      data: { status: 'done', finishedAt: new Date(), waitJson: null },
-    });
-    if (!count) return;
-    await this.missions.record(
-      mission.id,
-      'status',
-      { status: 'done', branch },
-      { notify: true },
-    );
-    await this.missions.record(
-      mission.id,
-      'final',
-      { branch, files: results.length },
-      { notify: true },
-    );
-  }
-
-  private async blockFinal(mission: Mission, detail: string) {
-    const wait = { code: 'final_checks', detail };
-    const { count } = await this.prisma.mission.updateMany({
-      where: { id: mission.id, status: 'running' },
-      data: { status: 'waiting', waitJson: JSON.stringify(wait) },
-    });
-    if (!count) return;
-    await this.missions.record(mission.id, 'wait', wait, { notify: true });
-  }
 }
 
 function previousOf(task: MissionTask) {

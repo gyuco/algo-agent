@@ -42,6 +42,8 @@ function mission(overrides: Partial<Mission> = {}): Mission {
     approvedAt: null,
     finishedAt: null,
     seenAt: null,
+    progressJson: '{}',
+    newProjectJson: null,
     ...overrides,
   };
 }
@@ -61,6 +63,8 @@ function service(initial: Mission) {
         if (where.status && where.status !== state.status) return null;
         return state;
       },
+      findUnique: async ({ where }: { where: { id?: number } }) =>
+        where.id !== undefined && where.id !== state.id ? null : state,
       findMany: async ({ where }: { where: { status?: string } }) =>
         !where.status || where.status === state.status ? [state] : [],
       update: async ({ data }: { data: Partial<Mission> }) => {
@@ -83,6 +87,7 @@ function service(initial: Mission) {
       findFirst: async () => (activePreparations ? { id: 55 } : null),
       findMany: async () => [{ id: 55, status: 'running' }],
       count: async () => 0,
+      updateMany: async () => ({ count: 0 }),
     },
     missionTask: {
       findMany: async () => [],
@@ -104,6 +109,7 @@ function service(initial: Mission) {
       activePreparations += 1;
       return { id: 90, ...data };
     }),
+    wake: vi.fn(),
   };
   const git = {
     isRepository: vi.fn(async () => true),
@@ -114,6 +120,7 @@ function service(initial: Mission) {
     resetTo: vi.fn(async () => undefined),
     removeWorktree: vi.fn(async () => undefined),
     deleteBranch: vi.fn(async () => undefined),
+    remoteHasCredentials: vi.fn(async () => false),
   };
   const sandbox = {
     available: vi.fn(
@@ -145,10 +152,12 @@ function service(initial: Mission) {
     queue as never,
     {} as never,
     runs as never,
-    { publish: () => undefined } as never,
+    { publish: () => undefined, remember: () => undefined } as never,
     git as never,
     sandbox as never,
     { resolvedDataDir: async () => '/data' } as never,
+    { view: async () => ({}), hasPlanData: async () => false } as never,
+    { activity: () => null } as never,
   );
   return { missions, state, entries, queue, git, sandbox, runs };
 }

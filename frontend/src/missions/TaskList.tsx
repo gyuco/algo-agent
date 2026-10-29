@@ -15,6 +15,8 @@ export function TaskList({
   const tasks = mission.tasks ?? []
   const byKey = new Map(tasks.map((task) => [task.key, task]))
   const milestones = mission.plan?.milestones ?? []
+  const current = mission.progress?.currentMilestone?.id
+  const reviewed = new Set(mission.progress?.reviewedMilestones ?? [])
 
   const row = (task: MissionTask) => {
     const blocked = task.status === 'blocked' ? task.report?.blocked : undefined
@@ -47,8 +49,19 @@ export function TaskList({
         const rows = milestone.tasks.map((task) => byKey.get(task.key)).filter((task): task is MissionTask => Boolean(task))
         if (!rows.length) return null
         return (
-          <section key={milestone.id}>
-            <h3>{milestone.title ?? milestone.id}</h3>
+          <section
+            key={milestone.id}
+            className={`milestone ${current === milestone.id ? 'current' : ''}`}
+          >
+            <h3>
+              {milestone.title ?? milestone.id}
+              {current === milestone.id && (
+                <span className="badge accent">{t('missions.milestone.current')}</span>
+              )}
+              {reviewed.has(milestone.id) && (
+                <span className="badge">{t('missions.milestone.reviewed')}</span>
+              )}
+            </h3>
             <ul>{rows.map(row)}</ul>
           </section>
         )

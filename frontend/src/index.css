@@ -495,6 +495,43 @@ code {
   overflow: hidden;
 }
 
+.meter-threshold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-h);
+  opacity: 0.6;
+}
+
+.meter-track {
+  position: relative;
+}
+
+.budget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.budget-compact {
+  gap: 0.4rem;
+}
+
+.budget-compact .meter-track {
+  height: 6px;
+}
+
+.budget-thresholds {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.5rem;
+}
+
+.budget-thresholds input {
+  width: 100%;
+}
+
 .meter-fill {
   height: 100%;
   border-radius: inherit;

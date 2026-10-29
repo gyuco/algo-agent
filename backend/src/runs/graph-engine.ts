@@ -27,6 +27,8 @@ export interface Answer {
 export interface CommandOutcome {
   ok: boolean;
   results: CheckResult[];
+  /** The perimeter was violated: the step fails even when it expects a failure. */
+  violation?: boolean;
 }
 
 /**
@@ -187,6 +189,7 @@ export async function* runGraph(
         return outcome;
       }
       if (port.mayStart && !(await port.mayStart(step))) {
+        yield { type: 'budget_wait' };
         outcome = 'waiting';
         return outcome;
       }
@@ -249,7 +252,12 @@ async function* verify(
       };
     }
     commands = yield* ctx.port.runCommands(step);
-    const failed = step.expect === 'fail' ? commands.ok : !commands.ok;
+    const failed =
+      commands.violation === true
+        ? true
+        : step.expect === 'fail'
+          ? commands.ok
+          : !commands.ok;
     if (failed) {
       const output = commandsText(commands);
       return {
@@ -310,9 +318,11 @@ async function* runStep(
       result.warning = 'i test passano già';
     }
     const ok = !step.agent
-      ? step.expect === 'fail'
-        ? true
-        : (outcome?.ok ?? false)
+      ? outcome?.violation
+        ? false
+        : step.expect === 'fail'
+          ? true
+          : (outcome?.ok ?? false)
       : true;
     if (!ok) {
       yield { type: 'error', message: `Passo ${step.id}: i comandi non hanno l'esito atteso` };

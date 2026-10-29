@@ -66,6 +66,8 @@ function mission(target: Plan): Mission {
     approvedAt: new Date(),
     finishedAt: null,
     seenAt: null,
+    progressJson: '{}',
+    newProjectJson: null,
   };
 }
 
@@ -81,6 +83,10 @@ async function rig(target: Plan = plan()) {
   await writeFile(join(repo, 'a.txt'), 'a\n');
   gitBin(repo, 'add', '-A');
   gitBin(repo, 'commit', '-m', 'init');
+  // A second commit: a repository with only the initial one skips the baseline (§8.3).
+  await writeFile(join(repo, 'b.txt'), 'b\n');
+  gitBin(repo, 'add', '-A');
+  gitBin(repo, 'commit', '-m', 'work');
   const baseCommit = gitBin(repo, 'rev-parse', 'HEAD');
 
   const state = mission(target);
@@ -148,10 +154,11 @@ async function rig(target: Plan = plan()) {
     { variables: async () => ({}) } as never,
     missions as never,
     { wake: () => undefined } as never,
+    { createRepo: async () => ({ httpsUrl: '', defaultBranch: 'main' }) } as never,
     { register: () => undefined } as never,
   );
   const run = { id: 99, missionId: state.id } as Run;
-  const worktree = missionWorktreePath(dataDir, state.projectId, state.id);
+  const worktree = missionWorktreePath(dataDir, state.projectId!, state.id);
   return { root, repo, baseCommit, state, handler, run, worktree, recordings };
 }
 

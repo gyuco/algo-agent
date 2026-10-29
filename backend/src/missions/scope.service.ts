@@ -66,8 +66,12 @@ export class ScopeService {
     worktree: string,
     base: string,
     scope: Plan['scope'],
+    /** Only these files: the task's diff, when the worktree holds more. */
+    only?: string[],
   ): Promise<ScopeViolation[]> {
-    const entries = await this.git.diff(worktree, base);
+    const entries = (await this.git.diff(worktree, base)).filter(
+      (entry) => !only || only.includes(entry.file),
+    );
     const violations: ScopeViolation[] = [];
     const allowed = [...scope.paths, ...scope.tests];
 
@@ -85,7 +89,7 @@ export class ScopeService {
         }
       }
 
-      if (entry.status === 'D') {
+      if (entry.status === 'D' && !matches(entry.file, scope.deletions)) {
         violations.push({ kind: 'deleted', file: entry.file });
       }
 

@@ -2,12 +2,23 @@ import { api, apiEvents, tokenStore } from '../api/client'
 import type { Attachment } from '../chat/attachments'
 import { reconnecting } from '../runs/api'
 
-export type MissionStatus = 'briefing' | 'planned' | 'approved' | 'running' | 'waiting' | 'done' | 'aborted'
+export type MissionStatus =
+  | 'briefing'
+  | 'planned'
+  | 'approved'
+  | 'running'
+  | 'paused'
+  | 'waiting'
+  | 'integrating'
+  | 'done'
+  | 'aborted'
 export type TaskStatus =
   | 'pending'
   | 'running'
   | 'review'
+  | 'ready'
   | 'merging'
+  | 'scope'
   | 'done'
   | 'blocked'
   | 'skipped'
@@ -55,6 +66,8 @@ export interface Plan {
     migrations: boolean
     paths: string[]
     tests: string[]
+    /** Files a task may delete. */
+    deletions: string[]
   }
   checks: {
     setup?: PlanCommand
@@ -73,14 +86,49 @@ export interface Plan {
     roles: Record<string, PlanRole>
     custom: PlanCustomAgent[]
   }
-  budget: { fiveHourMinRemaining: number; weeklyMaxShare: number }
+  budget: { fiveHourMinRemaining: number; weeklyMaxShare: number; maxUsd?: number }
   parallelTasks: number
   milestones: PlanMilestone[]
 }
 
+/** The mission's budget figures, as GET /missions/:id returns them. */
+export interface BudgetView {
+  source: 'plan' | 'api_key' | 'none'
+  observedAt: string | null
+  fiveHour?: { used: number; threshold: number; resetsAt: string }
+  week?: {
+    used: number
+    resetsAt: string
+    missionUsed: number
+    missionAllowance: number
+    globalUsed: number
+    globalCap: number
+  }
+  usd: { spent: number; allowance?: number }
+  estimate: true
+}
+
+export interface MissionBudgetOverview {
+  observedAt: string | null
+  fiveHour?: { used: number; resetsAt: string }
+  week?: { used: number; resetsAt: string; globalUsed: number; globalCap: number }
+  estimate: true
+  missions: {
+    id: number
+    title: string
+    status: MissionStatus
+    wait: { code?: string; scope?: string; until?: string } | null
+    budget: {
+      weekly: { used: number; allowance: number }
+      usd: { spent: number; allowance?: number }
+    }
+  }[]
+}
+
 export interface Mission {
   id: number
-  projectId: number
+  /** Null while a new project exists only as a briefing (phase 8). */
+  projectId: number | null
   userId: number
   title: string
   status: MissionStatus
@@ -105,7 +153,22 @@ export interface Mission {
     taskId?: number
     step?: string
     detail?: string
+    scope?: 'mission' | 'global'
+    window?: string
+    until?: string
+    planVersion?: number
+    previous?: Record<string, unknown>
+    violations?: { kind: string; file: string; name?: string }[]
+    previousPlan?: Plan
   } | null
+  /** On GET /missions/:id: the budget figures for the screen. */
+  budget?: BudgetView
+  /** On GET /missions/:id: the current milestone, the reviewed ones, the merge queue. */
+  progress?: {
+    reviewedMilestones: string[]
+    currentMilestone: { id: string; title: string } | null
+    mergeQueue: number[]
+  }
   /** On GET /missions/:id and /tasks: the plan's tasks with their state. */
   tasks?: MissionTask[]
   budgetJson: string
@@ -137,6 +200,11 @@ export type MissionEntryKind =
   | 'budget'
   | 'pr'
   | 'error'
+  | 'milestone'
+  | 'checks'
+  | 'checks_started'
+  | 'prepare'
+  | 'final'
 
 export interface MissionEntry {
   id: number
@@ -161,6 +229,7 @@ export interface TaskReport {
   warnings: string[]
   costUsd: number
   blocked?: { reason: 'attempts' | 'test_errati' | 'error' | 'config' | 'merge'; detail: string }
+  violations?: { kind: 'dependency' | 'migration' | 'deleted' | 'path'; file: string; name?: string }[]
   summary: string
   previous?: { diff: string; review: string }
 }
@@ -196,6 +265,13 @@ export interface MissionTaskDetail extends MissionTask {
   runs: MissionTaskRun[]
 }
 
+export interface CreateNewProject extends CreateMission {
+  name: string
+  forge: 'github' | 'gitlab'
+  namespace?: string
+  visibility: 'private' | 'internal' | 'public'
+}
+
 export interface CreateMission {
   input: string
   mode: MissionMode
@@ -204,18 +280,54 @@ export interface CreateMission {
   fromSession?: string
 }
 
+/** One mission in Richiedono te or In corso. */
+export interface MissionCard {
+  id: number
+  title: string
+  projectId: number
+  projectName: string
+  status: MissionStatus
+  mode: MissionMode
+  wait: { code?: string; taskId?: number; detail?: string; scope?: string; until?: string } | null
+  milestone: { id: string; title: string; done: number; total: number } | null
+  activeTasks: { key: string; step?: string; last?: string }[]
+  budget: BudgetView
+  unread: boolean
+}
+
+export interface MissionActivity {
+  waiting: MissionCard[]
+  running: MissionCard[]
+  unread: number
+}
+
 export const missionsApi = {
-  list: (query: { projectId?: number; status?: string } = {}) => {
+  list: (query: { projectId?: number; status?: string; unread?: boolean } = {}) => {
     const params = new URLSearchParams()
     if (query.projectId !== undefined) params.set('projectId', String(query.projectId))
     if (query.status) params.set('status', query.status)
+    if (query.unread) params.set('unread', 'true')
     const qs = params.toString()
     return api<Mission[]>(`/missions${qs ? `?${qs}` : ''}`)
   },
   get: (id: number) => api<Mission>(`/missions/${id}`),
+  seen: (id: number) => api<{ seenAt: string }>(`/missions/${id}/seen`, { method: 'POST' }),
+  activity: () => api<MissionActivity>('/missions/activity'),
+  setMode: (id: number, mode: MissionMode) =>
+    api<Mission>(`/missions/${id}/mode`, {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
+  acceptScope: (id: number) => api<Mission>(`/missions/${id}/scope/accept`, { method: 'POST' }),
+  retryPublish: (id: number) => api<Mission>(`/missions/${id}/publish/retry`, { method: 'POST' }),
   entries: (id: number) => api<MissionEntry[]>(`/missions/${id}/entries`),
   create: (projectId: number, body: CreateMission) =>
     api<Mission>(`/projects/${projectId}/missions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  createNewProject: (body: CreateNewProject) =>
+    api<Mission>('/missions/new-project', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -224,11 +336,21 @@ export const missionsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  approve: (id: number, body: { planVersion: number; mode: MissionMode }) =>
+  approve: (
+    id: number,
+    body: {
+      planVersion: number
+      mode: MissionMode
+      budget?: { fiveHourMinRemaining: number; weeklyMaxShare: number; maxUsd?: number }
+    },
+  ) =>
     api<Mission>(`/missions/${id}/approve`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  continueBudget: (id: number) =>
+    api<Mission>(`/missions/${id}/continue`, { method: 'POST' }),
+  budgetOverview: () => api<MissionBudgetOverview>('/missions/budget'),
   retryBaseline: (id: number) =>
     api<Mission>(`/missions/${id}/baseline/retry`, { method: 'POST' }),
   revise: (id: number) =>
@@ -272,6 +394,16 @@ export const missionsApi = {
     )
   },
 
+  /** §7.1: the entries of every mission of the user, for notifications. */
+  activeEvents(signal: AbortSignal, after = 0): AsyncGenerator<MissionEntry> {
+    let cursor = after
+    return reconnecting<MissionEntry>(
+      () => apiEvents<MissionEntry>(`/missions/active/events?after=${cursor}`, signal),
+      signal,
+      (seq) => (cursor = seq),
+    )
+  },
+
   /** Whether checks can run on this machine: Approve stays off without it. */
   sandbox: () => api<{ available: boolean; reason?: string }>('/system/sandbox'),
 }
@@ -281,7 +413,9 @@ export const MISSION_STATUS_KEY = {
   planned: 'missions.status.planned',
   approved: 'missions.status.approved',
   running: 'missions.status.running',
+  paused: 'missions.status.paused',
   waiting: 'missions.status.waiting',
+  integrating: 'missions.status.integrating',
   done: 'missions.status.done',
   aborted: 'missions.status.aborted',
 } as const
@@ -290,7 +424,9 @@ export const TASK_STATUS_KEY = {
   pending: 'missions.task.pending',
   running: 'missions.task.running',
   review: 'missions.task.review',
+  ready: 'missions.task.ready',
   merging: 'missions.task.merging',
+  scope: 'missions.task.scope',
   done: 'missions.task.done',
   blocked: 'missions.task.blocked',
   skipped: 'missions.task.skipped',

@@ -17,6 +17,7 @@ import {
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
 import { streamEvents } from '../common/sse.js';
+import { BudgetGuard } from './budget-guard.service.js';
 import { MissionScheduler } from './mission-scheduler.service.js';
 import { MissionTasksService } from './mission-tasks.service.js';
 import { MissionsService } from './missions.service.js';
@@ -25,7 +26,9 @@ import {
   CreateMissionDto,
   MissionEventsQueryDto,
   MissionMessageDto,
+  MissionModeDto,
   MissionsQueryDto,
+  NewProjectMissionDto,
   RedoTaskDto,
 } from './dto/mission.dto.js';
 
@@ -51,11 +54,49 @@ export class MissionsController {
     private readonly missions: MissionsService,
     private readonly tasks: MissionTasksService,
     private readonly scheduler: MissionScheduler,
+    private readonly budget: BudgetGuard,
   ) {}
 
   @Get()
   list(@Req() req: AuthenticatedRequest, @Query() query: MissionsQueryDto) {
     return this.missions.list(req.user.sub, query);
+  }
+
+  /** §8.2: a mission that creates its project at approval. */
+  @Post('new-project')
+  createNewProject(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: NewProjectMissionDto,
+  ) {
+    return this.missions.createNewProject(req.user.sub, dto);
+  }
+
+  /** The user's windows and the missions waiting on the budget, for Activity. */
+  @Get('budget')
+  budgetOverview(@Req() req: AuthenticatedRequest) {
+    return this.budget.userView(req.user.sub);
+  }
+
+  /** §7.1: every entry of the user's missions, live: the notifications stream. */
+  @Get('active/events')
+  async activeEvents(
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+    @Query() query: MissionEventsQueryDto,
+    @Headers('last-event-id') lastEventId?: string,
+  ) {
+    const after = query.after ?? (Number(lastEventId) || 0);
+    await streamEvents(
+      res,
+      (signal) => this.missions.followUser(req.user.sub, after, signal),
+      (entry) => ({ id: entry.id, data: this.missions.entryView(entry) }),
+    );
+  }
+
+  /** §7.1: Richiedono te and In corso. */
+  @Get('activity')
+  activity(@Req() req: AuthenticatedRequest) {
+    return this.missions.activity(req.user.sub);
   }
 
   @Get(':id')
@@ -138,6 +179,16 @@ export class MissionsController {
     return this.missions.entries(req.user.sub, id);
   }
 
+  /** §7.1: the mission is read; its notifications stop counting. */
+  @Post(':id/seen')
+  @HttpCode(HttpStatus.OK)
+  seen(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.missions.seen(req.user.sub, id);
+  }
+
   /** New log entries after `after` (or `Last-Event-ID`), then live ones. */
   @Get(':id/events')
   async events(
@@ -168,12 +219,24 @@ export class MissionsController {
 
   @Post(':id/approve')
   @HttpCode(HttpStatus.OK)
-  approve(
+  async approve(
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ApproveMissionDto,
   ) {
-    return this.missions.approve(req.user.sub, id, dto);
+    const mission = await this.missions.approve(req.user.sub, id, dto);
+    this.scheduler.wake(id);
+    return mission;
+  }
+
+  /** §6.3: after a failed push or pull request. */
+  @Post(':id/publish/retry')
+  @HttpCode(HttpStatus.OK)
+  retryPublish(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tasks.retryPublish(req.user.sub, id);
   }
 
   /** After `baseline`: a new base, then the preparation again. */
@@ -184,6 +247,36 @@ export class MissionsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.missions.retryBaseline(req.user.sub, id);
+  }
+
+  /** §5.1: switch between step by step and automatic during the mission. */
+  @Post(':id/mode')
+  @HttpCode(HttpStatus.OK)
+  setMode(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MissionModeDto,
+  ) {
+    return this.tasks.setMode(req.user.sub, id, dto.mode);
+  }
+
+  /** §5.7: accept the task's perimeter violations and widen the plan. */
+  @Post(':id/scope/accept')
+  @HttpCode(HttpStatus.OK)
+  acceptScope(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tasks.acceptScope(req.user.sub, id);
+  }
+
+  /** After `weekly_budget` or `usd_budget`: one more allowance. */
+  @Post(':id/continue')  @HttpCode(HttpStatus.OK)
+  continueBudget(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tasks.continueBudget(req.user.sub, id);
   }
 
   @Post(':id/revise')

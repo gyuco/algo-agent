@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 
 /** A git command the backend ran and that failed. */
@@ -37,6 +37,19 @@ export interface BaseRef {
 const MAX_BUFFER = 10 * 1024 * 1024;
 const STDERR_LENGTH = 4_096;
 const FALLBACK_AUTHOR = 'algo-agent <algo-agent@localhost>';
+
+/**
+ * A remote URL with a user (or a token) in it, e.g. `https://u:p@host/r.git`
+ * or `https://<token>@github.com/o/r`. SCP-like SSH (`git@host:o/r`) is fine:
+ * it carries no secret.
+ */
+export function hasUserInfo(url: string) {
+  const match = /^([a-z][a-z0-9+.-]*):\/\/([^/]*)/i.exec(url);
+  if (!match) return false;
+  const [, scheme, authority] = match;
+  if (scheme.toLowerCase() === 'file') return false;
+  return authority.includes('@');
+}
 
 /**
  * Every git command of the backend. Always `execFile` with an array, never a
@@ -200,6 +213,38 @@ export class GitService {
         this.gitTimeout(),
       );
       return url.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The origin URL, or null without one. */
+  async remoteUrl(cwd: string): Promise<string | null> {
+    try {
+      const url = await this.run(
+        cwd,
+        ['remote', 'get-url', 'origin'],
+        this.gitTimeout(),
+      );
+      return url.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Whether any remote URL embeds a user (or a token) before the host. The
+   * URL is in the shared `.git/config`, which the sandbox lets agents read: a
+   * token there would end up in the worktree, and then in the PR.
+   */
+  async remoteHasCredentials(cwd: string) {
+    try {
+      const out = await this.run(cwd, ['remote', '-v'], this.gitTimeout());
+      return out
+        .split('\n')
+        .map((line) => line.trim().split(/\s+/)[1])
+        .filter((url): url is string => Boolean(url))
+        .some(hasUserInfo);
     } catch {
       return false;
     }
@@ -576,6 +621,31 @@ export class GitService {
     );
   }
 
+  /** Stages everything, as the integrator does after resolving a conflict. */
+  async stageAll(dir: string) {
+    await this.run(dir, ['add', '-A'], this.gitTimeout());
+  }
+
+  /** Concludes an open merge with its prepared message, with the project's author. */
+  async continueMerge(dir: string) {
+    await this.run(
+      dir,
+      ['commit', '--no-edit'],
+      this.gitTimeout(),
+      await this.authorEnv(dir),
+    );
+  }
+
+  /** Which of `files` still carry conflict markers. */
+  async conflictMarkers(dir: string, files: string[]) {
+    const marked: string[] = [];
+    for (const file of files) {
+      const text = await readFile(join(dir, file), 'utf8').catch(() => '');
+      if (/^<{7}|^={7}|^>{7}/m.test(text)) marked.push(file);
+    }
+    return marked;
+  }
+
   async conflicts(dir: string) {
     const out = await this.run(
       dir,
@@ -588,9 +658,77 @@ export class GitService {
       .filter(Boolean);
   }
 
+  /** Creates a repository at `dir` on `branch`. */
+  async initRepo(dir: string, branch: string) {
+    await this.run(dir, ['init', '-b', branch], this.gitTimeout());
+  }
+
+  /** The initial empty commit of a new repository. */
+  async commitEmpty(dir: string, message: string) {
+    await this.run(
+      dir,
+      ['commit', '--allow-empty', '-m', message],
+      this.gitTimeout(),
+      await this.authorEnv(dir),
+    );
+  }
+
+  async addRemote(dir: string, name: string, url: string) {
+    await this.run(dir, ['remote', 'add', name, url], this.gitTimeout());
+  }
+
+  /** How many commits `rev` has. */
+  async commitCount(dir: string, rev: string) {
+    const out = await this.run(
+      dir,
+      ['rev-list', '--count', rev],
+      this.gitTimeout(),
+    );
+    return Number(out.trim()) || 0;
+  }
+
   /** The git directory of a worktree, for the sandbox profile. */
   async gitDirFor(cwd: string) {
     const dir = await this.commonGitDir(cwd);
     return dir ?? dirname(join(cwd, '.git'));
+  }
+
+  /**
+   * §6.2: pushes `branch` to the https remote with the token in an
+   * `http.extraHeader` from the environment: arguments show in the process
+   * list, the environment doesn't. Errors are cleaned of the token.
+   */
+  async push(
+    dir: string,
+    remoteHttpsUrl: string,
+    branch: string,
+    auth: { kind: 'github' | 'gitlab'; token: string },
+  ) {
+    const user = auth.kind === 'github' ? 'x-access-token' : 'oauth2';
+    const basic = Buffer.from(`${user}:${auth.token}`).toString('base64');
+    const env = {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.extraHeader',
+      GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+    };
+    try {
+      await this.run(
+        dir,
+        ['push', remoteHttpsUrl, `refs/heads/${branch}:refs/heads/${branch}`],
+        this.fetchTimeout(),
+        env,
+      );
+    } catch (error) {
+      if (!(error instanceof GitError)) throw error;
+      const clean = (value: string) =>
+        value
+          .split(auth.token)
+          .join('***')
+          .split(basic)
+          .join('***')
+          .split(encodeURIComponent(auth.token))
+          .join('***');
+      throw new GitError(error.args, error.code, clean(error.stderr));
+    }
   }
 }

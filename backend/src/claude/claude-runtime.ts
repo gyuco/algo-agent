@@ -376,6 +376,18 @@ export function* toEvents(
       if (message.error) {
         yield { type: 'error', message: `Claude Code: ${message.error}` };
       }
+      // Every assistant message, main thread or delegation, weighs on the week.
+      const usage = message.message.usage;
+      if (usage) {
+        yield {
+          type: 'tokens',
+          model: message.message.model,
+          input: usage.input_tokens ?? 0,
+          output: usage.output_tokens ?? 0,
+          cacheRead: usage.cache_read_input_tokens ?? 0,
+          cacheWrite: usage.cache_creation_input_tokens ?? 0,
+        };
+      }
       for (const block of message.message.content) {
         if (block.type === 'text' && delegation && block.text) {
           if (state.wroteText.has(delegation)) {

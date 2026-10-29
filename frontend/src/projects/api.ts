@@ -30,4 +30,8 @@ export const projectsApi = {
   remove: (id: number) => api<null>(`/projects/${id}`, { method: 'DELETE' }),
   browse: (path?: string) =>
     api<FolderListing>(`/projects/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  folderAvailable: (name: string) =>
+    api<{ available: boolean; reason?: string }>(
+      `/projects/folder-available?name=${encodeURIComponent(name)}`,
+    ),
 }

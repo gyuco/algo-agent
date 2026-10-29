@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { mkdir, realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { RunLimits } from './limits.js';
 
@@ -62,6 +63,11 @@ export class RunConfig {
   /** Where runs keep files between the request and their start, e.g. chat attachments. */
   dataDir() {
     return this.config.get<string>('DATA_DIR') || join(process.cwd(), 'data');
+  }
+
+  /** Where the projects live; a new project's folder is created here. */
+  workspaceRoot() {
+    return this.config.get<string>('WORKSPACE_ROOT') || homedir();
   }
 
   private resolvedDir: Promise<string> | null = null;

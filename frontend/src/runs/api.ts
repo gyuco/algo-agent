@@ -22,7 +22,19 @@ export type WaitReason =
   | { code: 'rateLimit'; until: string }
 
 /** The steps of a mission's preparation, in the order they run. */
-export type PrepareStep = 'fetch' | 'branch' | 'worktree' | 'setup' | 'build' | 'lint' | 'test'
+export type PrepareStep =
+  | 'create_folder'
+  | 'git_init'
+  | 'create_repo'
+  | 'push_base'
+  | 'register_project'
+  | 'fetch'
+  | 'branch'
+  | 'worktree'
+  | 'setup'
+  | 'build'
+  | 'lint'
+  | 'test'
 export type MissionCheckName = 'setup' | 'build' | 'lint' | 'test'
 
 /** What a running run is doing: its step and its last action. */

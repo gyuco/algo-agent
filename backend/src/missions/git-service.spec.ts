@@ -71,8 +71,18 @@ describe('GitService', () => {
     });
   });
 
-  it('runs git without a shell and knows the ref format', async () => {
+  it('spots a remote URL that carries credentials', async () => {
     const { dir } = await repository();
+    expect(await service.remoteHasCredentials(dir)).toBe(false);
+    git(dir, 'remote', 'add', 'origin', 'git@github.com:o/r.git');
+    expect(await service.remoteHasCredentials(dir)).toBe(false);
+    git(dir, 'remote', 'set-url', 'origin', 'https://u:p@host/r.git');
+    expect(await service.remoteHasCredentials(dir)).toBe(true);
+    git(dir, 'remote', 'set-url', 'origin', 'https://host/r.git');
+    expect(await service.remoteHasCredentials(dir)).toBe(false);
+  });
+
+  it('runs git without a shell and knows the ref format', async () => {    const { dir } = await repository();
     expect(await service.isRepository(dir)).toBe(true);
     expect(await service.checkRefFormat(dir, 'feature/x')).toBe(true);
     expect(await service.checkRefFormat(dir, 'a..b')).toBe(false);

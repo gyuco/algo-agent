@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RunConfig } from './run-config.js';
 import { RunExecutorService } from './run-executor.service.js';
+import { RunFiles } from './run-files.js';
 import { RunLog } from './run-log.js';
 import { RunQueueService } from './run-queue.service.js';
 import { readSteps } from './run-steps.js';
@@ -32,6 +33,7 @@ export class RunRecoveryService
     private readonly executor: RunExecutorService,
     private readonly log: RunLog,
     private readonly queue: RunQueueService,
+    private readonly files: RunFiles,
   ) {}
 
   async onApplicationBootstrap() {
@@ -116,5 +118,8 @@ export class RunRecoveryService
       where: { run: { finishedAt: { lt: before } } },
     });
     if (count) this.logger.log(`Dropped ${count} old run events`);
+    await this.files.cleanUp(before).catch((error: unknown) =>
+      this.logger.warn(`Attachment cleanup failed: ${String(error)}`),
+    );
   }
 }

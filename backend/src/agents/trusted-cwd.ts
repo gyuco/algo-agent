@@ -23,3 +23,20 @@ export async function trustedWorktreeCwd(
   }
   return resolved;
 }
+
+/** The briefing folder of a new project, under `DATA_DIR/briefing/<missionId>`. */
+export async function trustedBriefingCwd(
+  dataDir: string,
+  missionId: number,
+  cwd: string,
+): Promise<string> {
+  const root = join(dataDir, 'briefing', String(missionId));
+  const resolvedRoot = await realpath(root).catch(() => root);
+  const resolved = await realpath(cwd).catch(() => null);
+  if (!resolved || !isInside(resolvedRoot, resolved)) {
+    throw new BadRequestException(
+      "La cartella del briefing deve stare sotto DATA_DIR/briefing",
+    );
+  }
+  return resolved;
+}

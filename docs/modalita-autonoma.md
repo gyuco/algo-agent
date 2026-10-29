@@ -902,3 +902,43 @@ meccanismo di `seq`.
 7. **Notifiche e Attività**: gruppo Missioni, notifiche di sistema, non letti.
 8. **Progetti nuovi**: creazione del repository all'approvazione, scaffolding come prima
    milestone.
+
+## 17. Aggiornamenti dalle fasi 4-8
+
+Queste sono le decisioni prese scrivendo il codice delle fasi 4-8; dove contraddicono le
+sezioni precedenti, valgono queste.
+
+- **§4.1/§4.2**: `Mission.progressJson` tiene `reviewedMilestones` e la coda di merge
+  informativa; `MissionTask.status` aggiunge `ready` e `scope`.
+- **§4.4**: `Run.purposeJson` dice a cosa serve un turno dell'orchestratore
+  (`briefing`, `milestone`, `revision`, `final`). I nuovi kind sono `mission-checks`,
+  `mission-integrate` e `mission-publish`; nessuno ha un limite per utente, solo
+  `concurrent`.
+- **§5**: `scope.deletions` elenca i file che un task può cancellare. I comandi si fermano
+  solo per una `dependency`; `path`, `deleted` e `migration` si annotano e portano all'attesa
+  `scope` alla chiusura del task.
+- **§7.1**: una missione `integrating` pubblica il branch. Le attese `publish` hanno
+  `step` (`token`, `push`, `pr`) e si sbloccano con `POST /missions/:id/publish/retry`.
+- **§7.2**: `paused` con `five_hour` o `model_window`; `waiting` con `weekly_budget` (scope
+  `mission` o `global`) e `usd_budget`. Il timer di ripresa sta in `BudgetResumeService`.
+- **§7.3**: le milestone sono barriere: i task della successiva partono dopo la revisione.
+  `close_milestone` conferma; un turno senza `update_plan` né `close_milestone` vale come
+  conferma e lascia un'entry `milestone` con `implicit: true`.
+- **§8.3**: i tool dell'orchestratore dipendono da `purpose`; la revisione di milestone usa
+  una sessione nuova, la revisione su richiesta continua l'ultima.
+- **§8.4**: l'integratore gira in un run separato (`mission-integrate`) mentre il merge resta
+  aperto nel worktree della missione; il commit lo fa `mission-checks` dopo i controlli.
+- **§10.1**: il token del forge passa solo dall'ambiente (`http.extraHeader`), mai dagli
+  argomenti di git; gli errori sono ripuliti da token e base64.
+- **§10.2**: la pubblicazione è il run `mission-publish`; la PR si cerca prima e si riusa se
+  è già aperta.
+- **§11**: lo stream delle missioni è separato da quello dei run
+  (`GET /missions/active/events`); il riepilogo per Attività è `GET /missions/activity`.
+- **§12**: nuove rotte `POST /missions/:id/mode`, `POST /missions/:id/scope/accept`,
+  `POST /missions/:id/continue`, `POST /missions/:id/publish/retry`, `POST /missions/:id/seen`,
+  `GET /missions/budget`, `GET /missions/activity`, `GET /missions/active/events`,
+  `POST /missions/new-project`, `GET /projects/folder-available`, `GET /vault/forges`.
+- **§4.1 (fase 8)**: `Mission.projectId` e `Run.projectId` sono nullable solo per il briefing
+  di un progetto nuovo; `Mission.newProjectJson` dice nome, forge, namespace, visibilità e
+  cartella del briefing. I passi di preparazione in più sono idempotenti e il controllo di
+  base si salta quando il branch ha solo il commit iniziale.

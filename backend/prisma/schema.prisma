@@ -67,12 +67,13 @@ model Project {
 /// A mission: an orchestrator interviews the user, proposes a plan and, from phase 2, runs it.
 model Mission {
   id                Int       @id @default(autoincrement())
-  projectId         Int
-  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Null until the approval of a new project creates it (phase 8).
+  projectId         Int?
+  project           Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId            Int
   user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   title             String
-  /// "briefing", "planned", "approved", "running", "waiting", "aborted".
+  /// "briefing", "planned", "approved", "running", "paused", "waiting", "done", "aborted".
   status            String
   /// "step" or "auto".
   mode              String
@@ -93,6 +94,10 @@ model Mission {
   prUrl             String?
   waitJson          String?
   budgetJson        String    @default("{}")
+  /// Mission progress (JSON): { reviewedMilestones: string[] }
+  progressJson      String    @default("{}")
+  /// A mission that creates its project (JSON): { name, forge, namespace, visibility, briefingDir }.
+  newProjectJson    String?
   costUsd           Float     @default(0)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -117,7 +122,7 @@ model MissionTask {
   /// Id of the task in the plan, unique in the mission.
   key          String
   milestone    String
-  /// "pending", "running", "review", "merging", "blocked", "done", "skipped" or "aborted".
+  /// "pending", "running", "review", "ready", "merging", "scope", "blocked", "done", "skipped" or "aborted".
   status       String    @default("pending")
   branch       String?
   worktreePath String?
@@ -211,8 +216,9 @@ model ProjectResource {
 /// A workflow run or a chat turn, executed in the background: it outlives the request that started it.
 model Run {
   id           Int       @id @default(autoincrement())
-  projectId    Int
-  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Null only for the briefing turns of a new project (phase 8).
+  projectId    Int?
+  project      Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId       Int
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// "workflow", "chat", "mission-orchestrator" or "mission-task"
@@ -246,6 +252,8 @@ model Run {
   mission       Mission?     @relation(fields: [missionId], references: [id], onDelete: Cascade)
   missionTaskId Int?
   missionTask   MissionTask? @relation(fields: [missionTaskId], references: [id], onDelete: SetNull)
+  /// What an orchestrator turn is for (JSON): { purpose: 'briefing' | 'milestone' | 'revision' | 'final' }.
+  purposeJson   String?
   /// Steps run so far (JSON): [{ agent, output, isError }]
   stepsJson    String    @default("[]")
   /// A task run's graph frozen when it starts (JSON).

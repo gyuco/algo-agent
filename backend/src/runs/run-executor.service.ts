@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Run } from '../generated/prisma/client.js';
+import type { RateLimitSnapshot } from '../claude/rate-limit.js';
+import { BudgetGuard } from '../missions/budget-guard.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RunEventBus } from './run-event-bus.js';
 import { RunFiles } from './run-files.js';
@@ -47,6 +49,7 @@ export class RunExecutorService {
     private readonly bus: RunEventBus,
     private readonly handlers: RunHandlers,
     private readonly files: RunFiles,
+    private readonly budget: BudgetGuard,
   ) {}
 
   isExecuting(runId: number) {
@@ -144,7 +147,21 @@ export class RunExecutorService {
           break;
         }
         const event = next.value;
-        if (event.type === 'done') costUsd += event.costUsd;
+        // Tokens feed the weekly quota attribution: they are too many to store and clients don't need them.
+        if (event.type === 'tokens') {
+          this.budget.recordTokens(run, event);
+          continue;
+        }
+        if (event.type === 'usage') {
+          void this.budget.snapshot(
+            run.userId,
+            event.details.rateLimits as RateLimitSnapshot | undefined,
+          );
+        }
+        if (event.type === 'done') {
+          costUsd += event.costUsd;
+          this.budget.calibrate(run.id, event.costUsd);
+        }
         if (event.type === 'error') error = event.message;
         if (event.type === 'session') await this.sessionStarted(run, event);
         this.track(run, event);

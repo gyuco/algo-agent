@@ -49,6 +49,8 @@ function mission(overrides: Partial<Mission> = {}): Mission {
     approvedAt: new Date(),
     finishedAt: null,
     seenAt: null,
+    progressJson: '{}',
+    newProjectJson: null,
     ...overrides,
   };
 }
@@ -113,6 +115,13 @@ function rig(
         return {};
       },
     } as never, // missions
+    { gate: async () => ({ ok: true }) } as never, // budget
+    {
+      busy: async () => false,
+      queueChecks: async () => ({}),
+      reviewMilestone: async () => undefined,
+    } as never, // flow
+    { publish: () => undefined } as never, // bus
   );
   const started: string[] = [];
   (scheduler as unknown as { start: (m: unknown, p: unknown, t: { key: string }, r: unknown) => Promise<void> }).start =
@@ -120,20 +129,14 @@ function rig(
       started.push(task.key);
     };
   const finals: number[] = [];
-  const recorded: { kind: string; data: unknown }[] = [];
-  if (options.checkResults) {
-    // Exercise the real final checks.
-    (scheduler as unknown as { missions: { record: (id: number, kind: string, data: unknown) => Promise<unknown> } }).missions.record =
-      async (_id: number, kind: string, data: unknown) => {
-        recorded.push({ kind, data });
-        return {};
-      };
-  } else {
-    (scheduler as unknown as { finalChecks: (m: Mission) => Promise<void> }).finalChecks =
-      async (m) => {
-        finals.push(m.id);
-      };
-  }
+  (scheduler as unknown as { flow: unknown }).flow = {
+    busy: async () => false,
+    queueChecks: async (m: Mission) => {
+      finals.push(m.id);
+      return {};
+    },
+    reviewMilestone: async () => undefined,
+  };
   return {
     scheduler,
     state,
@@ -141,7 +144,6 @@ function rig(
     finals,
     created,
     waits,
-    recorded,
     pass: () =>
       (scheduler as unknown as { pass: (id: number) => Promise<void> }).pass(
         state.id,
@@ -201,27 +203,260 @@ describe('MissionScheduler', () => {
     expect(finals).toEqual([7]);
   });
 
-  it('closes the mission when the final checks pass', async () => {
-    const { pass, state, recorded } = rig([{ key: 'a', status: 'done' }], {
-      checkResults: [{ ok: true, name: 'test' }],
-    });
-    await pass();
-    expect(state.status).toBe('done');
-    expect(recorded.some((e) => e.kind === 'final')).toBe(true);
-  });
-
-  it('waits with final_checks when they fail', async () => {
-    const { pass, state } = rig([{ key: 'a', status: 'done' }], {
-      checkResults: [{ ok: false, name: 'test', output: 'guasto' }],
-    });
-    await pass();
-    expect(state.status).toBe('waiting');
-    expect(JSON.parse(state.waitJson!)).toMatchObject({ code: 'final_checks' });
-  });
-
   it('creates the task rows of a running mission without them', async () => {
     const { pass, created } = rig([]);
     await pass();
     expect(created).toHaveLength(2);
+  });
+});
+
+function autoPlan(
+  milestones: {
+    id: string;
+    tasks: { key: string; needs?: string[] }[];
+  }[],
+  parallelTasks = 2,
+) {
+  return planSchema.parse({
+    title: 'Mission',
+    goal: 'g',
+    checks: { test: 'npm test' },
+    team: {
+      orchestrator: 'claude:opus',
+      roles: { implementer: { agent: 'writer', model: 'claude:sonnet' } },
+    },
+    parallelTasks,
+    milestones: milestones.map((m) => ({
+      ...m,
+      tasks: m.tasks.map((t) => ({
+        ...t,
+        template: 'task-tdd',
+        acceptance: ['ok'],
+      })),
+    })),
+  });
+}
+
+function autoRig(
+  statuses: { key: string; status: string }[],
+  options: {
+    parallelTasks?: number;
+    milestones?: { id: string; tasks: { key: string; needs?: string[] }[] }[];
+    reviewed?: string[];
+  } = {},
+) {
+  const plan = autoPlan(
+    options.milestones ?? [
+      {
+        id: 'm1',
+        tasks: statuses.map((task) => ({
+          key: task.key,
+          needs: [],
+        })),
+      },
+    ],
+    options.parallelTasks ?? 2,
+  );
+  const state = mission({
+    mode: 'auto',
+    planJson: JSON.stringify(plan),
+    progressJson: JSON.stringify({
+      reviewedMilestones: options.reviewed ?? [],
+    }),
+  });
+  const milestoneOf = new Map(
+    plan.milestones.flatMap((m) =>
+      m.tasks.map((task) => [task.key, m.id] as const),
+    ),
+  );
+  const rows = statuses.map((task, i) => ({
+    id: i + 1,
+    missionId: state.id,
+    key: task.key,
+    milestone: milestoneOf.get(task.key) ?? 'm1',
+    status: task.status,
+    branch: `mission/7/${task.key}`,
+    worktreePath: null,
+    taskBase: 'base',
+    runId: null,
+    attempts: 0,
+    notesJson: '[]',
+    reportJson: null,
+    startedAt: null,
+    finishedAt: null,
+  }));
+  const prisma = {
+    mission: {
+      findUnique: async () => state,
+      updateMany: async ({ data }: { data: Partial<Mission> }) => {
+        Object.assign(state, data);
+        return { count: 1 };
+      },
+      update: async ({ data }: { data: Partial<Mission> }) => {
+        Object.assign(state, data);
+        return state;
+      },
+    },
+    missionTask: {
+      count: async () => rows.length,
+      createMany: async () => ({ count: 0 }),
+      findMany: async () => rows,
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id?: number; key?: string };
+        data: { status?: string };
+      }) => {
+        const row = rows.find(
+          (r) => (where.id !== undefined && r.id === where.id) || r.key === where.key,
+        );
+        if (!row) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      },
+    },
+    run: {
+      findUnique: async () => null,
+      count: async () => 0,
+      enqueue: async () => ({ id: 1 }),
+    },
+    missionEntry: { findFirst: async () => null, create: async () => ({}) },
+  };
+  const scheduler = new MissionScheduler(
+    prisma as never,
+    { resolvedDataDir: async () => '/tmp', limits: () => ({ missionTasks: 6 }) } as never,
+    { get: async () => ({ id: 2, path: '/repo' }) } as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    { enqueue: async () => ({ id: 1 }) } as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    { record: async () => ({}) } as never,
+    { gate: async () => ({ ok: true }) } as never,
+    {
+      busy: async () => false,
+      queueChecks: async () => ({}),
+      reviewMilestone: async () => undefined,
+    } as never,
+    { publish: () => undefined } as never,
+  );
+  const started: string[] = [];
+  const checks: string[] = [];
+  const merged: string[] = [];
+  (scheduler as unknown as { start: (m: unknown, p: unknown, t: { key: string }) => Promise<void> }).start =
+    async (_m, _p, task) => {
+      started.push(task.key);
+    };
+  (scheduler as unknown as { mergeTask: (m: unknown, p: unknown, t: { key: string }) => Promise<void> }).mergeTask =
+    async (_m, _p, task) => {
+      merged.push(task.key);
+    };
+  (scheduler as unknown as {
+    flow: {
+      busy: () => Promise<boolean>;
+      queueChecks: (m: unknown, purpose: string) => Promise<unknown>;
+      reviewMilestone: () => Promise<void>;
+    };
+  }).flow = {
+    busy: async () => false,
+    queueChecks: async (_m: unknown, purpose: string) => {
+      checks.push(purpose);
+      return {};
+    },
+    reviewMilestone: async () => undefined,
+  };
+  return {
+    started,
+    checks,
+    merged,
+    state,
+    pass: () =>
+      (scheduler as unknown as { pass: (id: number) => Promise<void> }).pass(
+        state.id,
+      ),
+  };
+}
+
+describe('MissionScheduler automatic', () => {
+  it('starts independent tasks together up to parallelTasks', async () => {
+    const { pass, started } = autoRig(
+      [
+        { key: 'a', status: 'pending' },
+        { key: 'b', status: 'pending' },
+        { key: 'c', status: 'pending' },
+      ],
+      { parallelTasks: 2 },
+    );
+    await pass();
+    expect(started).toEqual(['a', 'b']);
+  });
+
+  it('fills a free slot while another task runs', async () => {
+    const { pass, started } = autoRig(
+      [
+        { key: 'a', status: 'running' },
+        { key: 'b', status: 'pending' },
+        { key: 'c', status: 'pending' },
+      ],
+      { parallelTasks: 2 },
+    );
+    await pass();
+    expect(started).toEqual(['b']);
+  });
+
+  it('merges a ready task while another runs', async () => {
+    const { pass, merged, started } = autoRig([
+      { key: 'a', status: 'running' },
+      { key: 'b', status: 'ready' },
+    ]);
+    await pass();
+    expect(merged).toEqual(['b']);
+    expect(started).toEqual([]);
+  });
+
+  it('does not start the next milestone before the review', async () => {
+    const { pass, started, checks } = autoRig(
+      [
+        { key: 'a', status: 'done' },
+        { key: 'c', status: 'pending' },
+      ],
+      {
+        milestones: [
+          { id: 'm1', tasks: [{ key: 'a' }] },
+          { id: 'm2', tasks: [{ key: 'c' }] },
+        ],
+      },
+    );
+    await pass();
+    expect(started).toEqual([]);
+    expect(checks).toEqual(['milestone']);
+  });
+
+  it('starts the tasks a block does not depend on', async () => {
+    const { pass, started } = autoRig(
+      [
+        { key: 'a', status: 'blocked' },
+        { key: 'b', status: 'pending' },
+        { key: 'c', status: 'pending' },
+      ],
+      {
+        milestones: [
+          {
+            id: 'm1',
+            tasks: [
+              { key: 'a' },
+              { key: 'b' },
+              { key: 'c', needs: ['a'] },
+            ],
+          },
+        ],
+      },
+    );
+    await pass();
+    expect(started).toEqual(['b']);
   });
 });

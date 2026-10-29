@@ -55,9 +55,33 @@ export async function protectedFiles(
   return [...files].filter((file) => changed.has(file));
 }
 
-/** One commit per task: the checkpoints collapse at the end of an attempt. */
-export async function squash(
+/** The last checkpoint of the steps, or the task's base when none wrote. */
+export function lastCheckpoint(
+  steps: Record<string, { checkpoint?: string }>,
+  taskBase: string,
+) {
+  return (
+    Object.values(steps)
+      .map((s) => s.checkpoint)
+      .filter((c): c is string => Boolean(c))
+      .at(-1) ?? taskBase
+  );
+}
+
+/** Puts a worktree back to the last checkpoint: a task resumes from there. */
+export async function resetToLastCheckpoint(
   git: GitService,
+  worktree: string,
+  steps: Record<string, { checkpoint?: string }>,
+  taskBase: string,
+) {
+  const checkpoint = lastCheckpoint(steps, taskBase);
+  if (checkpoint) await git.resetTo(worktree, checkpoint);
+  return checkpoint;
+}
+
+/** One commit per task: the checkpoints collapse at the end of an attempt. */
+export async function squash(  git: GitService,
   worktree: string,
   taskBase: string,
   title: string,

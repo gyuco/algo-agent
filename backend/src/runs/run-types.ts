@@ -9,7 +9,10 @@ export type RunKind =
   | 'chat'
   | 'mission-orchestrator'
   | 'mission-task'
-  | 'mission-prepare';
+  | 'mission-prepare'
+  | 'mission-checks'
+  | 'mission-integrate'
+  | 'mission-publish';
 
 export type RunStatus =
   | 'queued'
@@ -73,11 +76,25 @@ export type RunEventData =
       status: 'started' | 'done' | 'failed' | 'skipped';
       detail?: string;
     }
+  /** The engine stopped before a step: the budget is exhausted (phase 4). */
+  | { type: 'budget_wait'; kind?: string; until?: string }
+  | { type: 'publish_step'; step: 'push' | 'pr'; status: 'started' | 'done' | 'failed'; detail?: string }
   | { type: 'finished'; status: RunStatus };
 
 /** The steps of a mission's preparation, in the order they run. */
 export type PrepareStep =
-  'fetch' | 'branch' | 'worktree' | 'setup' | 'build' | 'lint' | 'test';
+  | 'create_folder'
+  | 'git_init'
+  | 'create_repo'
+  | 'push_base'
+  | 'register_project'
+  | 'fetch'
+  | 'branch'
+  | 'worktree'
+  | 'setup'
+  | 'build'
+  | 'lint'
+  | 'test';
 
 export type { CheckName };
 
@@ -100,7 +117,9 @@ export type WaitReason =
   | { code: 'instance' }
   | { code: 'user' }
   | { code: 'project' }
-  | { code: 'rateLimit'; until: string };
+  | { code: 'rateLimit'; until: string }
+  /** The mission's budget gate holds the run back; `until` when the window resets. */
+  | { code: 'budget'; kind: string; until?: string };
 
 /** Runs one kind of run. Workflows and chat register theirs with `RunHandlers`. */
 export interface RunHandler {

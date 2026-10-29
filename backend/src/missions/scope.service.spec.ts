@@ -17,6 +17,7 @@ const scope = (overrides: Partial<Plan['scope']> = {}): Plan['scope'] => ({
   dependencies: [],
   migrations: false,
   paths: [],
+  deletions: [],
   tests: [],
   ...overrides,
 });
@@ -73,6 +74,18 @@ describe('ScopeService', () => {
     expect(await service.check(dir, base, scope())).toEqual([
       { kind: 'dependency', file: 'package.json', name: 'vitest' },
     ]);
+  });
+
+  it('accepts a deletion listed in scope.deletions', async () => {
+    const { dir, base } = await worktree();
+    await rm(join(dir, 'README.md'));
+
+    expect(
+      (await service.check(dir, base, scope())).filter((v) => v.kind === 'deleted'),
+    ).toEqual([{ kind: 'deleted', file: 'README.md' }]);
+    expect(
+      await service.check(dir, base, scope({ deletions: ['README.md'] })),
+    ).toEqual([]);
   });
 
   it('reports migrations unless the plan allows them', async () => {

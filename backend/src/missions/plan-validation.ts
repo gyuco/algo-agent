@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { IsEnabled } from '../agents/project-resources.service.js';
 import type { Catalog } from '../catalog/catalog.js';
-import { normalizeSteps, type GraphStep } from '../catalog/workflow-graph.js';
+import { checksOf, normalizeSteps, type GraphStep } from '../catalog/workflow-graph.js';
 import { parseRef } from '../providers/model-ref.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { VaultService } from '../vault/vault.service.js';
@@ -47,7 +47,7 @@ export class PlanValidationService {
 
   async validate(
     userId: number,
-    project: { id: number; path: string },
+    project: { id: number | null; path: string },
     plan: Plan,
     catalog: Catalog,
     enabled: IsEnabled,
@@ -75,6 +75,8 @@ export class PlanValidationService {
 
     await this.roles(plan, catalog, enabled, available, errors);
     this.templates(plan, catalog, enabled, errors);
+    // §8.4: a new project has no tests yet: its first milestone is the scaffolding.
+    if (project.id === null) this.newProject(plan, errors);
     this.dependencies(plan, errors);
     this.judges(plan, catalog, errors);
 
@@ -97,6 +99,24 @@ export class PlanValidationService {
     }
 
     return { errors, sessions: this.sessions(plan, catalog) };
+  }
+
+  /** §8.4: the first milestone of a new project scaffolds it, never starts from red tests. */
+  private newProject(plan: Plan, errors: string[]) {
+    const first = plan.milestones[0];
+    if (!first) return;
+    if (!first.tasks.some((task) => ['task-config', 'task-docs'].includes(task.template))) {
+      errors.push(
+        'milestones[0]: la prima milestone di un progetto nuovo deve essere lo scaffolding (task-config o task-docs)',
+      );
+    }
+    first.tasks.forEach((task, ti) => {
+      if (task.template === 'task-tdd') {
+        errors.push(
+          `milestones[0].tasks[${ti}].template: task-tdd vuole test già esistenti: nel primo scaffolding usa task-config`,
+        );
+      }
+    });
   }
 
   /** Commands are argument vectors, never shell lines (§1.4). */
@@ -124,7 +144,7 @@ export class PlanValidationService {
   /** The secrets the plan exposes must exist in the vault. */
   private async secrets(
     userId: number,
-    projectId: number,
+    projectId: number | null,
     plan: Plan,
     errors: string[],
   ) {
@@ -336,16 +356,24 @@ export class PlanValidationService {
     return task.agents[role] ?? plan.team.roles[role]?.agent ?? null;
   }
 
+  /**
+   * Worst-case agent sessions: only steps with an agent count, and `repeat.max`
+   * multiplies only the repeating step and its verification (debt 0.3).
+   */
   private sessions(plan: Plan, catalog: Catalog) {
     let sessions = 0;
     for (const task of planTasks(plan)) {
       const template = catalog.workflows.get(task.template);
       if (!template) continue;
-      const maxRepeat = Math.max(
-        1,
-        ...template.steps.map((s) => s.repeat?.max ?? 1),
+      const steps = normalizeSteps(template.steps);
+      const checks = checksOf(steps);
+      const repeatOf = new Map(
+        [...checks].map(([checkId, step]) => [checkId, step.repeat!.max]),
       );
-      sessions += template.steps.length * maxRepeat;
+      for (const step of steps) {
+        if (!step.agent) continue;
+        sessions += step.repeat?.max ?? repeatOf.get(step.id) ?? 1;
+      }
     }
     return sessions;
   }

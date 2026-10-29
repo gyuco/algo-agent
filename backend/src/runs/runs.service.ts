@@ -55,7 +55,7 @@ export class RunsService {
     return run;
   }
 
-  view(run: Run & { project?: { name: string }; mission?: { title: string } | null }) {
+  view(run: Run & { project?: { name: string } | null; mission?: { title: string } | null }) {
     const {
       stepsJson,
       specJson: _spec,

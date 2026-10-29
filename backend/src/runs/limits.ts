@@ -15,7 +15,8 @@ export interface RunLimits {
 /** What the scheduler needs to know about a run. */
 export interface RunSlot {
   userId: number;
-  projectId: number;
+  /** Null for the briefing turn of a new project. */
+  projectId: number | null;
   kind: string;
   writes: boolean;
 }

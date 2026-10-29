@@ -21,6 +21,15 @@ export type ChatEvent =
   | { type: 'delegation_done'; id: string; isError: boolean }
   /** New provider-specific connection details (e.g. Claude's plan usage). */
   | { type: 'usage'; provider: string; details: Record<string, unknown> }
+  /** The tokens of one assistant message: the weekly quota weighs sessions by them. */
+  | {
+      type: 'tokens';
+      model: string;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+    }
   | {
       type: 'done';
       isError: boolean;
@@ -160,6 +169,8 @@ export interface AgentProvider {
     agents: boolean;
   };
   status(userId: number): Promise<ProviderStatus>;
+  /** Asks the provider for its plan limits now, where the provider has windows. */
+  refreshUsage?(userId: number): Promise<ProviderStatus>;
   disconnect(userId: number): Promise<void>;
   run(ctx: RunContext): AsyncGenerator<ChatEvent>;
   /** Conversations held in `cwd` (resolved project folder), newest first. */

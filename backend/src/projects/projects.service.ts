@@ -5,8 +5,10 @@ import {
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -50,6 +52,15 @@ export class ProjectsService {
     });
     if (!project) throw new NotFoundException('Progetto non trovato');
     return project;
+  }
+
+  /** §8.5: whether WORKSPACE_ROOT/`name` is free for a new project. */
+  folderAvailable(name: string) {
+    const valid = /^[a-z0-9][a-z0-9-_.]{0,99}$/.test(name);
+    return {
+      available: valid && !existsSync(join(this.workspaceRoot(), name)),
+      ...(valid ? {} : { reason: 'nome non valido' }),
+    };
   }
 
   async create(userId: number, dto: ProjectDto) {

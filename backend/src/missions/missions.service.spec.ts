@@ -17,6 +17,7 @@ function service(updated = 1) {
   const prisma = {
     mission: {
       findFirst: vi.fn(async () => mission),
+      findUnique: vi.fn(async () => mission),
       updateMany: vi.fn(async () => ({ count: updated })),
     },
     run: { findFirst: vi.fn(async () => null) },
@@ -36,7 +37,7 @@ function service(updated = 1) {
     providers: { connected: async () => [{ id: 'claude' }] },
     runner: { check: async () => ({ provider: 'claude' }) },
     queue,
-    bus: { publish: vi.fn() },
+    bus: { publish: vi.fn(), remember: vi.fn() },
   };
   const missions = new MissionsService(
     deps.prisma as never,
@@ -54,6 +55,8 @@ function service(updated = 1) {
     {} as never,
     {} as never,
     {} as never,
+    { view: async () => ({}) } as never,
+    { activity: () => null } as never,
   );
   return { missions, prisma, queue, release };
 }

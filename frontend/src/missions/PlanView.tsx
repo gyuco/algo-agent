@@ -23,6 +23,11 @@ export function PlanView({ mission, onChanged }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [sandbox, setSandbox] = useState<{ available: boolean; reason?: string } | null>(null)
   const plan = mission.plan
+  const [five, setFive] = useState(String(plan?.budget.fiveHourMinRemaining ?? 0.1))
+  const [week, setWeek] = useState(String(plan?.budget.weeklyMaxShare ?? 0.3))
+  const [maxUsd, setMaxUsd] = useState(
+    plan?.budget.maxUsd === undefined ? '' : String(plan.budget.maxUsd),
+  )
 
   useEffect(() => setMode(mission.mode), [mission.mode])
 
@@ -59,6 +64,11 @@ export function PlanView({ mission, onChanged }: Props) {
         await missionsApi.approve(mission.id, {
           planVersion: mission.planVersion,
           mode,
+          budget: {
+            fiveHourMinRemaining: Number(five),
+            weeklyMaxShare: Number(week),
+            ...(maxUsd.trim() ? { maxUsd: Number(maxUsd) } : {}),
+          },
         })
       } else {
         await missionsApi.revise(mission.id)
@@ -132,10 +142,48 @@ export function PlanView({ mission, onChanged }: Props) {
         </dd>
         <dt>{t('missions.budget')}</dt>
         <dd>
-          {t('missions.budgetDetail', {
-            five: String(plan.budget.fiveHourMinRemaining),
-            week: String(plan.budget.weeklyMaxShare),
-          })}
+          {mission.status === 'planned' ? (
+            <div className="budget-thresholds">
+              <label>
+                {t('missions.budget.thresholdFive')}
+                <input
+                  type="number"
+                  min={0.05}
+                  max={0.5}
+                  step={0.01}
+                  value={five}
+                  onChange={(e) => setFive(e.target.value)}
+                />
+              </label>
+              <label>
+                {t('missions.budget.thresholdWeek')}
+                <input
+                  type="number"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={week}
+                  onChange={(e) => setWeek(e.target.value)}
+                />
+              </label>
+              <label>
+                {t('missions.budget.maxUsd')}
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  placeholder="—"
+                  value={maxUsd}
+                  onChange={(e) => setMaxUsd(e.target.value)}
+                />
+              </label>
+            </div>
+          ) : (
+            t('missions.budgetDetail', {
+              five: String(plan.budget.fiveHourMinRemaining),
+              week: String(plan.budget.weeklyMaxShare),
+            })
+          )}
           {' · '}
           {t('missions.parallel', { n: String(plan.parallelTasks) })}
         </dd>

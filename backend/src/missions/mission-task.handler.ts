@@ -22,6 +22,8 @@ import type {
   RunOutcome,
 } from '../runs/run-types.js';
 import { VaultService } from '../vault/vault.service.js';
+import { BudgetGuard, shouldInterrupt } from './budget-guard.service.js';
+import type { RateLimitSnapshot } from '../claude/rate-limit.js';
 import {
   ChecksService,
   type CheckEvent,
@@ -29,12 +31,14 @@ import {
   type CheckResult,
 } from './checks.service.js';
 import { GitService } from './git-service.js';
+import { MissionEventBus } from './mission-event-bus.js';
 import { MissionTools } from './mission-tools.js';
 import { planSchema, planTasks, type Plan } from './plan-schema.js';
 import { ScopeService, type ScopeViolation } from './scope.service.js';
 import {
   checkpoint,
   protectedFiles,
+  resetToLastCheckpoint,
   squash as squashCheckpoints,
 } from './task-checkpoints.js';
 import type { ResolvedAgent, TaskGraph } from './task-graph.factory.js';
@@ -63,6 +67,8 @@ export interface TaskReport {
   warnings: string[];
   costUsd: number;
   blocked?: { reason: BlockedReason; detail: string };
+  /** The perimeter violations found in this attempt (phase 5). */
+  violations?: ScopeViolation[];
   summary: string;
 }
 
@@ -140,6 +146,17 @@ function summaryOf(steps: Record<string, { output: string }>) {
   return text.slice(0, SUMMARY_LENGTH);
 }
 
+/** The same violation seen by several checks counts once. */
+function dedupe(violations: ScopeViolation[]) {
+  const seen = new Set<string>();
+  return violations.filter((v) => {
+    const key = JSON.stringify(v);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function violationsText(violations: ScopeViolation[]) {
   return violations
     .map((v) => {
@@ -175,6 +192,8 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
     private readonly tools: MissionTools,
     private readonly queue: RunQueueService,
     private readonly handlers: RunHandlers,
+    private readonly budget: BudgetGuard,
+    private readonly bus: MissionEventBus,
   ) {}
 
   onModuleInit() {
@@ -217,12 +236,12 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       return 'done';
     }
 
-    const project = await this.projects.get(run.userId, mission.projectId);
+    const project = await this.projects.get(run.userId, mission.projectId!);
     const catalog = await this.catalogService.forProject(
       run.userId,
-      mission.projectId,
+      mission.projectId!,
     );
-    const enabled = await this.resources.isEnabled(mission.projectId, catalog);
+    const enabled = await this.resources.isEnabled(mission.projectId!, catalog);
     const missing = Object.values(graph.agents)
       .filter((a) => catalog.agents.has(a.spec.key) && !enabled('agent', a.spec.key))
       .map((a) => `L'agente ${a.spec.key} è disattivato nel progetto`);
@@ -247,20 +266,31 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       }
     }
 
-    const all = await this.vault.variables(run.userId, mission.projectId);
+    const all = await this.vault.variables(run.userId, mission.projectId!);
     const secrets = Object.fromEntries(
       plan.data.checks.secrets
         .filter((name) => name in all)
         .map((name) => [name, all[name]]),
     );
     const iterations = new Map<string, number>();
+    // §5.7: violations don't all block; they are collected for the closure and the wait.
+    const scopeViolations: ScopeViolation[] = [];
+    // §2.4: a session that runs out of the five-hour window is cut here, not the run.
+    const watch = {
+      minRemaining: plan.data.budget.fiveHourMinRemaining,
+      cut: new AbortController(),
+      cutAborted: false,
+    };
+    const priorStatus = new Map(
+      Object.entries(steps).map(([id, result]) => [id, result.status]),
+    );
 
     // `setup` runs once per task worktree, inside the run: it can be stopped and shows its output.
     const setup = yield* this.streamChecks((onEvent) =>
       this.checks
         .ensureSetup({
           runId: run.id,
-          projectId: run.projectId,
+          projectId: run.projectId!,
           worktree,
           plan: plan.data,
           names: ['setup'],
@@ -299,9 +329,19 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
           text,
           sessionId,
           signal,
+          watch,
         ),
       runCommands: (step: GraphStep) =>
-        this.runCommands(step, run, plan.data, worktree, taskBase, secrets, signal),
+        this.runCommands(
+          step,
+          run,
+          plan.data,
+          worktree,
+          taskBase,
+          secrets,
+          signal,
+          scopeViolations,
+        ),
       beforeCheck: async (check, writer, push) => {
         const output = await this.protect(
           check,
@@ -312,16 +352,21 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
           plan.data,
           push,
         );
+        // §5.7: `dependency` blocks the commands; the other violations are annotated.
         const violations = await this.scope.check(
           worktree,
           taskBase,
           plan.data.scope,
         );
         if (violations.length) {
+          scopeViolations.push(...violations);
           push({ type: 'scope_violation', id: check.id, violations });
         }
-        const parts = [output, violations.length ? violationsText(violations) : null]
-          .filter((p): p is string => Boolean(p));
+        const blocking = violations.filter((v) => v.kind === 'dependency');
+        const parts = [
+          output,
+          blocking.length ? violationsText(blocking) : null,
+        ].filter((p): p is string => Boolean(p));
         return parts.length ? parts.join('\n') : null;
       },
       afterWrite: async (step) => {
@@ -329,7 +374,12 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
         iterations.set(step.id, round);
         return checkpoint(this.git, worktree, step.id, round);
       },
-      mayStart: async () => true,
+      mayStart: async (step: GraphStep) => {
+        if (!step.agent) return true;
+        const model = byStep.get(step.id)?.spec.model;
+        const gate = await this.budget.gate(mission.id, model);
+        return gate.ok;
+      },
     };
 
     let outcome: RunOutcome;
@@ -362,15 +412,73 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       });
       return 'done';
     }
-    // The mission was stopped while the engine ran.
+    // The mission was stopped while the engine ran. A paused or waiting mission
+    // (budget, revision, another task's wait) lets its running tasks finish.
     const current = await this.prisma.mission.findUnique({
       where: { id: mission.id },
       select: { status: true },
     });
-    if (current?.status !== 'running') return 'done';
+    if (!current || !['running', 'paused', 'waiting'].includes(current.status)) {
+      return 'done';
+    }
 
-    await this.finish(run, task, mission, plan.data, graph, steps, outcome);
+    // §2.3/§2.4: the run stops between steps; the task and the mission stay as they are.
+    // A session cut by the budget fails its step: it goes back to `pending` too.
+    if (outcome === 'waiting' || watch.cutAborted) {
+      if (watch.cutAborted) {
+        await this.suspend(run, worktree, taskBase, steps, priorStatus);
+      }
+      return 'waiting';
+    }
+
+    await this.finish(
+      run,
+      task,
+      mission,
+      plan.data,
+      graph,
+      steps,
+      outcome,
+      scopeViolations,
+    );
     return 'done';
+  }
+
+  /**
+   * Puts an interrupted step back to `pending`, without its output or a counted
+   * round, and the worktree back to the last checkpoint. The scheduler's resume
+   * timer queues the run again when the budget allows it.
+   */
+  private async suspend(
+    run: Run,
+    worktree: string,
+    taskBase: string,
+    steps: StepResults,
+    priorStatus: Map<string, string>,
+  ) {
+    for (const [id, result] of Object.entries(steps)) {
+      const before = priorStatus.get(id);
+      if (result.status !== 'failed' && result.status !== 'aborted') continue;
+      if (before === 'failed') continue;
+      result.status = 'pending';
+      result.finishedAt = null;
+      if (before !== 'done') {
+        result.output = '';
+        result.costUsd = 0;
+        delete result.verdict;
+        delete result.review;
+        delete result.commands;
+        delete result.warning;
+        delete result.stopVerdict;
+      }
+    }
+    await resetToLastCheckpoint(this.git, worktree, steps, taskBase).catch(
+      () => undefined,
+    );
+    await this.prisma.run.update({
+      where: { id: run.id },
+      data: { stepsJson: JSON.stringify(steps) },
+    });
   }
 
   private graphOf(run: Run): TaskGraph | null {
@@ -394,11 +502,17 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
     text: string,
     sessionId: string | undefined,
     signal: AbortSignal,
+    watch: {
+      minRemaining: number;
+      cut: AbortController;
+      cutAborted: boolean;
+    },
   ): AsyncGenerator<RunEventData, Answer> {
     if (!agent) {
       return { output: '', costUsd: 0, failed: true };
     }
     const answer: Answer = { output: '', costUsd: 0, failed: false };
+    const sessionSignal = AbortSignal.any([signal, watch.cut.signal]);
     for await (const event of this.runner.run({
       userId: run.userId,
       project,
@@ -429,10 +543,19 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
           taskBase: task.taskBase!,
         },
       },
-      signal,
+      signal: sessionSignal,
     })) {
       if (event.type === 'text') answer.output += event.text;
       if (event.type === 'session') answer.sessionId = event.sessionId;
+      if (event.type === 'usage' && !watch.cutAborted) {
+        const snapshot = event.details.rateLimits as
+          | RateLimitSnapshot
+          | undefined;
+        if (shouldInterrupt(snapshot, watch.minRemaining)) {
+          watch.cutAborted = true;
+          watch.cut.abort();
+        }
+      }
       if (event.type === 'error') answer.failed = true;
       if (event.type === 'done') {
         answer.costUsd += event.costUsd;
@@ -452,6 +575,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
     taskBase: string,
     secrets: Record<string, string>,
     signal: AbortSignal,
+    scopeViolations: ScopeViolation[],
   ): AsyncGenerator<RunEventData, CommandOutcome> {
     const names = (step.run ?? []).filter(
       (n): n is CheckName => n === 'build' || n === 'lint' || n === 'test',
@@ -472,9 +596,13 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       yield { type: 'commands_finished', id: step.id, ok: false, results: [] };
       return { ok: false, results: [result] };
     }
-    if (violations.length) {
-      const text = violationsText(violations);
-      yield { type: 'scope_violation', id: step.id, violations };
+    // §5.7: a new dependency stops the commands (it isn't installed yet); the
+    // other violations are recorded and the commands run.
+    scopeViolations.push(...violations);
+    const blocking = violations.filter((v) => v.kind === 'dependency');
+    if (blocking.length) {
+      const text = violationsText(blocking);
+      yield { type: 'scope_violation', id: step.id, violations: blocking };
       const result = {
         name: (names[0] ?? 'test') as CheckName,
         argv: [],
@@ -498,7 +626,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
           },
         ],
       };
-      return { ok: false, results: [result] };
+      return { ok: false, results: [result], violation: true };
     }
 
     // The output reaches the user while the commands run, as in the preparation.
@@ -508,7 +636,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
     const running = this.checks
       .run({
         runId: run.id,
-        projectId: run.projectId,
+        projectId: run.projectId!,
         worktree,
         plan,
         names,
@@ -612,6 +740,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
     graph: TaskGraph,
     steps: Record<string, unknown>,
     outcome: RunOutcome,
+    scopeViolations: ScopeViolation[],
   ) {
     const report = await this.report(
       task,
@@ -620,25 +749,101 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       steps as never,
       outcome,
       graph,
+      scopeViolations,
     );
     const resultStep = (steps as Record<string, { verdict?: string; stopVerdict?: string }>)[
       graph.result
     ];
-    const status = resultStep?.verdict === 'ok' && outcome === 'done' ? 'review' : 'blocked';
-    if (status === 'review') await this.squash(task, plan, mission);
+    const fresh = await this.prisma.mission.findUnique({
+      where: { id: mission.id },
+      select: { mode: true },
+    });
+    const auto = fresh?.mode === 'auto';
+    const ok = resultStep?.verdict === 'ok' && outcome === 'done';
+    // §5.7: a violation at closure waits for the user, instead of a review or a
+    // merge. A failed task waits on the perimeter only for a new dependency (the
+    // commands couldn't run); otherwise it is blocked as usual.
+    const violations = await this.closingViolations(task, plan, scopeViolations);
+    const withScope = ok
+      ? violations.length > 0
+      : violations.some((v) => v.kind === 'dependency');
+    const status = withScope ? 'scope' : ok ? (auto ? 'ready' : 'review') : 'blocked';
+    if (ok) await this.squash(task, plan, mission);
+    if (violations.length) report.violations = violations;
+    else delete report.violations;
 
     const reportJson = JSON.stringify(report);
     const now = new Date();
+    const before = await this.lastEntry(mission.id);
     await this.prisma.$transaction(async (tx) => {
       const moved = await tx.missionTask.updateMany({
         where: { id: task.id, status: 'running' },
         data: {
           status,
-          finishedAt: status === 'blocked' ? now : null,
+          // A `ready` task waits for the merge, in the order it finished.
+          finishedAt: status === 'review' ? null : now,
           reportJson,
         },
       });
       if (!moved.count) return;
+      // §5.1: in automatic mode the scheduler waits on it only once nothing else runs.
+      if (status === 'scope' && !auto) {
+        const wait = {
+          code: 'scope',
+          taskId: task.id,
+          violations,
+        };
+        await tx.mission.update({
+          where: { id: mission.id },
+          data: {
+            status: 'waiting',
+            waitJson: JSON.stringify(wait),
+            costUsd: { increment: report.costUsd },
+          },
+        });
+        await tx.missionEntry.create({
+          data: {
+            missionId: mission.id,
+            taskId: task.id,
+            kind: 'wait',
+            dataJson: JSON.stringify({
+              ...wait,
+              report: { ...report, diff: undefined },
+            }),
+            notify: true,
+          },
+        });
+        await tx.missionEntry.create({
+          data: {
+            missionId: mission.id,
+            taskId: task.id,
+            kind: 'status',
+            dataJson: JSON.stringify({ status, taskId: task.id }),
+          },
+        });
+        return;
+      }
+      if (auto) {
+        // §5.3: no Ok from the user; the scheduler merges it, or the dependents stop.
+        await tx.mission.update({
+          where: { id: mission.id },
+          data: { costUsd: { increment: report.costUsd } },
+        });
+        await tx.missionEntry.create({
+          data: {
+            missionId: mission.id,
+            taskId: task.id,
+            kind: 'status',
+            dataJson: JSON.stringify({
+              status,
+              taskId: task.id,
+              attempt: task.attempts,
+              costUsd: report.costUsd,
+            }),
+          },
+        });
+        return;
+      }
       const wait =
         status === 'review'
           ? { code: 'task_review', taskId: task.id }
@@ -675,6 +880,41 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
         },
       });
     });
+    await this.publishSince(mission.id, before);
+  }
+
+  /**
+   * The violations left at closure: the task's final diff, so one the agent
+   * fixed later doesn't count. Those seen during the run are the fallback.
+   */
+  private async closingViolations(
+    task: MissionTask,
+    plan: Plan,
+    seen: ScopeViolation[],
+  ): Promise<ScopeViolation[]> {
+    if (!task.worktreePath || !task.taskBase) return dedupe(seen);
+    try {
+      return await this.scope.check(task.worktreePath, task.taskBase, plan.scope);
+    } catch {
+      return dedupe(seen);
+    }
+  }
+
+  /** The last entry of the mission, so entries created in a transaction can be published. */
+  private async lastEntry(missionId: number) {
+    const last = await this.prisma.missionEntry.aggregate({
+      where: { missionId },
+      _max: { id: true },
+    });
+    return last._max.id ?? 0;
+  }
+
+  private async publishSince(missionId: number, after: number) {
+    const rows = await this.prisma.missionEntry.findMany({
+      where: { missionId, id: { gt: after } },
+      orderBy: { id: 'asc' },
+    });
+    for (const row of rows) this.bus.publish(row);
   }
 
   /** One commit per task on its branch, then the review sees a single change. */
@@ -714,6 +954,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
     >,
     outcome: RunOutcome,
     graph: TaskGraph,
+    scopeViolations: ScopeViolation[] = [],
   ): Promise<TaskReport & { previous?: unknown }> {
     let files: TaskReport['diff']['files'] = [];
     let added = 0;
@@ -785,6 +1026,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       warnings,
       costUsd,
       ...(blocked ? { blocked } : {}),
+      ...(scopeViolations.length ? { violations: scopeViolations } : {}),
       summary: writer
         ? summaryOf({ [writer]: { output: steps[writer]?.output ?? '' } })
         : '',
@@ -860,6 +1102,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       blocked,
       summary: '',
     };
+    const before = await this.lastEntry(mission.id);
     await this.prisma.$transaction(async (tx) => {
       const moved = await tx.missionTask.updateMany({
         where: { id: task.id, status: 'running' },
@@ -897,6 +1140,7 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
         },
       });
     });
+    await this.publishSince(mission.id, before);
   }
 
   /** Queues a new run continuing an interrupted one, from its last checkpoint. */
@@ -906,25 +1150,21 @@ export class MissionTaskHandler implements RunHandler, OnModuleInit {
       where: { id: run.missionTaskId },
     });
     if (!task || task.status !== 'running') return { runId: run.id };
-    const steps = readSteps(run.stepsJson) as unknown as Record<string, unknown>;
+    const steps = readSteps(run.stepsJson);
     // Keep only closed steps: the interrupted one runs again.
     const kept = Object.fromEntries(
-      Object.entries(steps).filter(
-        ([, s]) => (s as { status?: string }).status === 'done',
-      ),
+      Object.entries(steps).filter(([, s]) => s.status === 'done'),
     );
-    const checkpoint =
-      Object.values(steps)
-        .map((s) => (s as { checkpoint?: string }).checkpoint)
-        .filter((c): c is string => Boolean(c))
-        .at(-1) ?? task.taskBase;
-    if (task.worktreePath && checkpoint) {
-      await this.git.resetTo(task.worktreePath, checkpoint).catch(() => undefined);
-    }
+    await resetToLastCheckpoint(
+      this.git,
+      task.worktreePath ?? '',
+      steps,
+      task.taskBase ?? '',
+    ).catch(() => undefined);
     let resumed = 0;
     await this.queue.enqueue(
       {
-        projectId: run.projectId,
+        projectId: run.projectId!,
         userId: run.userId,
         kind: 'mission-task',
         title: run.title,

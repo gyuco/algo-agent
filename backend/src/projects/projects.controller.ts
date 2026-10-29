@@ -25,6 +25,12 @@ export class ProjectsController {
     return this.projects.list(req.user.sub);
   }
 
+  /** §8.5: the name of a new project is free. */
+  @Get('folder-available')
+  folderAvailable(@Query('name') name: string) {
+    return this.projects.folderAvailable(name ?? '');
+  }
+
   /** Folder listing for the path picker. */
   @Get('browse')
   browse(@Query() dto: BrowseDto) {

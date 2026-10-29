@@ -98,6 +98,8 @@ export const planSchema = z
         dependencies: z.array(z.string().trim().min(1)).default([]),
         migrations: z.boolean().default(false),
         paths: z.array(relativePathSchema).default([]),
+        /** Files a task may delete. */
+        deletions: z.array(relativePathSchema).default([]),
         /** Files a task's implementer may not change (fixtures, helpers). */
         tests: z.array(relativePathSchema).default([]),
       })
@@ -146,8 +148,10 @@ export const planSchema = z
       .strict(),
     budget: z
       .object({
-        fiveHourMinRemaining: z.number().min(0).max(1).default(0.1),
-        weeklyMaxShare: z.number().min(0).max(1).default(0.3),
+        fiveHourMinRemaining: z.number().min(0.05).max(0.5).default(0.1),
+        weeklyMaxShare: z.number().min(0.05).max(1).default(0.3),
+        /** Cap in dollars for connections without plan data (API key). */
+        maxUsd: z.number().positive().max(100_000).optional(),
       })
       .strict()
       .prefault({}),

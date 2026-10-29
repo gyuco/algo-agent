@@ -19,3 +19,6 @@ export function vaultApiFor(projectId: number | null) {
     remove: (name: string) => api<null>(path(name), { method: 'DELETE' }),
   }
 }
+
+/** The forges with a token in the user's vault: only their names (§8.5). */
+export const vaultForges = () => api<{ forges: ('github' | 'gitlab')[] }>('/vault/forges')

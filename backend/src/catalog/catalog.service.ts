@@ -105,7 +105,7 @@ export class CatalogService {
    * The catalog a run in the project uses: `${NAME}` in MCP servers resolve to
    * the project's secrets, then the user's.
    */
-  async forProject(userId: number, projectId: number): Promise<Catalog> {
+  async forProject(userId: number, projectId: number | null): Promise<Catalog> {
     const [catalog, variables] = await Promise.all([
       this.forUser(userId, projectId),
       this.variables(userId, projectId),
