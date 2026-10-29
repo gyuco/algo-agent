@@ -21,9 +21,25 @@ export function PlanView({ mission, onChanged }: Props) {
   const [mode, setMode] = useState<MissionMode>(mission.mode)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sandbox, setSandbox] = useState<{ available: boolean; reason?: string } | null>(null)
   const plan = mission.plan
 
   useEffect(() => setMode(mission.mode), [mission.mode])
+
+  useEffect(() => {
+    let live = true
+    void missionsApi
+      .sandbox()
+      .then((status) => {
+        if (live) setSandbox(status)
+      })
+      .catch(() => {
+        if (live) setSandbox({ available: false })
+      })
+    return () => {
+      live = false
+    }
+  }, [])
 
   if (!plan) {
     return (
@@ -89,6 +105,16 @@ export function PlanView({ mission, onChanged }: Props) {
                 </code>
               </div>
             ))}
+          {plan.checks.testFilter && (
+            <div>
+              <code>testFilter: {plan.checks.testFilter}</code>
+            </div>
+          )}
+          {(plan.checks.secrets?.length ?? 0) > 0 && (
+            <div className="hint">
+              {t('missions.secrets')}: {(plan.checks.secrets ?? []).join(', ')}
+            </div>
+          )}
           {!plan.checks.parallel && <div className="hint">{t('missions.checksSequential')}</div>}
         </dd>
         <dt>{t('missions.team')}</dt>
@@ -168,6 +194,13 @@ export function PlanView({ mission, onChanged }: Props) {
           {error}
         </p>
       )}
+      {sandbox && !sandbox.available && (
+        <p className="error" role="alert">
+          {t('missions.sandboxMissing')}
+          {sandbox.reason ? ` — ${sandbox.reason}` : ''}
+        </p>
+      )}
+      {!mission.baseBranch && <p className="error" role="alert">{t('missions.noGit')}</p>}
 
       {mission.status === 'planned' && (
         <div className="row plan-actions">
@@ -183,21 +216,15 @@ export function PlanView({ mission, onChanged }: Props) {
           </button>
           <button
             type="button"
-            disabled={busy || Boolean(mission.validationErrors?.length)}
+            disabled={
+              busy ||
+              Boolean(mission.validationErrors?.length) ||
+              sandbox?.available === false ||
+              !mission.baseBranch
+            }
             onClick={() => void act('approve')}
           >
             {t('missions.approve')}
-          </button>
-        </div>
-      )}
-      {mission.status === 'approved' && (
-        <div className="row plan-actions">
-          <span className="badge accent">
-            {t('missions.approvedBadge', { n: String(mission.approvedVersion ?? mission.planVersion) })}
-          </span>
-          <span className="hint">{t('missions.phaseTwo')}</span>
-          <button type="button" className="secondary" disabled={busy} onClick={() => void act('revise')}>
-            {t('missions.revise')}
           </button>
         </div>
       )}

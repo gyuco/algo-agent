@@ -2,6 +2,8 @@ import { join } from 'node:path';
 import type { IsEnabled } from '../agents/project-resources.service.js';
 import { buildCatalog, readCatalogDir } from '../catalog/catalog.js';
 import type { ProvidersService } from '../providers/providers.service.js';
+import type { VaultService } from '../vault/vault.service.js';
+import type { GitService } from './git-service.js';
 import { PlanValidationService } from './plan-validation.js';
 import { planSchema, type Plan } from './plan-schema.js';
 
@@ -19,8 +21,22 @@ const providers = {
   ],
 } as unknown as ProvidersService;
 
-const validation = new PlanValidationService(providers);
-const project = { id: 1, path: '/tmp/definitely-not-a-git-repository-for-plan-tests' };
+const git = {
+  isRepository: async () => false,
+  branchExists: async () => false,
+  checkRefFormat: async (_cwd: string, branch: string) =>
+    /^[A-Za-z0-9._/-]+$/.test(branch) && !branch.includes('..'),
+} as unknown as GitService;
+
+const vault = {
+  variables: async () => ({ DATABASE_URL: 'postgres://x' }),
+} as unknown as VaultService;
+
+const validation = new PlanValidationService(providers, git, vault);
+const project = {
+  id: 1,
+  path: '/tmp/definitely-not-a-git-repository-for-plan-tests',
+};
 const enabled = (): IsEnabled => () => true;
 
 async function catalog() {
@@ -77,16 +93,38 @@ describe('PlanValidationService', () => {
   it('rejects duplicate keys, future dependencies and cycles', async () => {
     const duplicate = plan({
       milestones: [
-        { id: 'm1', tasks: [{ key: 'a', template: 'task-tdd', acceptance: ['x'], needs: [] }] },
-        { id: 'm2', tasks: [{ key: 'a', template: 'task-tdd', acceptance: ['x'], needs: [] }] },
+        {
+          id: 'm1',
+          tasks: [
+            { key: 'a', template: 'task-tdd', acceptance: ['x'], needs: [] },
+          ],
+        },
+        {
+          id: 'm2',
+          tasks: [
+            { key: 'a', template: 'task-tdd', acceptance: ['x'], needs: [] },
+          ],
+        },
       ],
     });
-    expect(await errors(duplicate)).toContain('tasks.a: chiave duplicata nel piano');
+    expect(await errors(duplicate)).toContain(
+      'tasks.a: chiave duplicata nel piano',
+    );
 
     const future = plan({
       milestones: [
-        { id: 'm1', tasks: [{ key: 'a', template: 'task-tdd', acceptance: ['x'], needs: ['b'] }] },
-        { id: 'm2', tasks: [{ key: 'b', template: 'task-tdd', acceptance: ['x'], needs: [] }] },
+        {
+          id: 'm1',
+          tasks: [
+            { key: 'a', template: 'task-tdd', acceptance: ['x'], needs: ['b'] },
+          ],
+        },
+        {
+          id: 'm2',
+          tasks: [
+            { key: 'b', template: 'task-tdd', acceptance: ['x'], needs: [] },
+          ],
+        },
       ],
     });
     expect(await errors(future)).toContain(
@@ -104,7 +142,11 @@ describe('PlanValidationService', () => {
         },
       ],
     });
-    expect((await errors(cycle)).some((e) => e.startsWith('needs: dipendenze cicliche'))).toBe(true);
+    expect(
+      (await errors(cycle)).some((e) =>
+        e.startsWith('needs: dipendenze cicliche'),
+      ),
+    ).toBe(true);
   });
 
   it('requires the integrator and the roles used by the templates', async () => {
@@ -170,8 +212,9 @@ describe('PlanValidationService', () => {
       'team.roles.tester.model: il modello claude:ghost non è disponibile',
     );
 
-    const disabled = await errors(plan(), (kind, key) =>
-      !(kind === 'workflow' && key === 'task-tdd'),
+    const disabled = await errors(
+      plan(),
+      (kind, key) => !(kind === 'workflow' && key === 'task-tdd'),
     );
     expect(disabled).toContain(
       'milestones[0].tasks[0].template: il modello "task-tdd" non è abilitato nel progetto',
@@ -181,7 +224,14 @@ describe('PlanValidationService', () => {
       milestones: [
         {
           id: 'm1',
-          tasks: [{ key: 'a', template: 'review-and-fix', acceptance: ['x'], needs: [] }],
+          tasks: [
+            {
+              key: 'a',
+              template: 'review-and-fix',
+              acceptance: ['x'],
+              needs: [],
+            },
+          ],
         },
       ],
     });
@@ -217,14 +267,73 @@ describe('planSchema', () => {
       milestones: [
         {
           id: 'docs',
-          tasks: [{ key: 'readme', template: 'task-docs', acceptance: ['README aggiornato'] }],
+          tasks: [
+            {
+              key: 'readme',
+              template: 'task-docs',
+              acceptance: ['README aggiornato'],
+            },
+          ],
         },
       ],
     });
-    expect((await errors(docs)).join('\n')).toMatch(/checks non ne definisce nessuno/);
+    expect((await errors(docs)).join('\n')).toMatch(
+      /checks non ne definisce nessuno/,
+    );
     expect(
-      await errors({ ...docs, checks: { ...docs.checks, lint: 'npm run lint' } }),
+      await errors({
+        ...docs,
+        checks: { ...docs.checks, lint: 'npm run lint' },
+      }),
     ).toEqual([]);
+  });
+
+  it('refuses shell operators in the commands', async () => {
+    const base = plan();
+    const messages = await errors({
+      ...base,
+      checks: { ...base.checks, test: 'npm test && npm run lint' },
+    });
+    expect(messages.join('\n')).toMatch(/checks\.test: .*operatore di shell/);
+
+    const filter = planSchema.safeParse({
+      ...base,
+      checks: { ...base.checks, testFilter: '--' },
+    });
+    expect(filter.success).toBe(false);
+    expect(
+      planSchema.safeParse({
+        ...base,
+        checks: { ...base.checks, testFilter: '-- {{pattern}}' },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts only secrets that exist in the vault', async () => {
+    const base = plan();
+    expect(
+      (
+        await errors({
+          ...base,
+          checks: { ...base.checks, secrets: ['DATABASE_URL'] },
+        })
+      ).join('\n'),
+    ).toBe('');
+    expect(
+      (
+        await errors({
+          ...base,
+          checks: { ...base.checks, secrets: ['MISSING'] },
+        })
+      ).join('\n'),
+    ).toMatch(/checks\.secrets\[0\]: il segreto "MISSING" non esiste/);
+  });
+
+  it('refuses an invalid base branch name', async () => {
+    const base = plan();
+    expect((await errors({ ...base, baseBranch: 'a..b' })).join('\n')).toMatch(
+      /baseBranch: "a\.\.b" non è un nome di branch valido/,
+    );
   });
 
   it('keeps every path of the plan inside the project', () => {
@@ -233,14 +342,21 @@ describe('planSchema', () => {
       const input = { ...base, checks: { ...base.checks, workdir: bad } };
       expect(planSchema.safeParse(input).success).toBe(false);
       expect(
-        planSchema.safeParse({ ...base, scope: { ...base.scope, paths: [bad] } }).success,
+        planSchema.safeParse({
+          ...base,
+          scope: { ...base.scope, paths: [bad] },
+        }).success,
       ).toBe(false);
     }
     expect(
       planSchema.safeParse({
         ...base,
         checks: { ...base.checks, workdir: 'backend' },
-        scope: { ...base.scope, paths: ['backend/src/**'], tests: ['**/*.spec.ts'] },
+        scope: {
+          ...base.scope,
+          paths: ['backend/src/**'],
+          tests: ['**/*.spec.ts'],
+        },
       }).success,
     ).toBe(true);
   });

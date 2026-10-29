@@ -27,6 +27,7 @@ import { RunsService } from './runs.service.js';
     RunsService,
   ],
   exports: [
+    RunConfig,
     RunEventBus,
     RunHandlers,
     RunLog,

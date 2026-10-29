@@ -1,4 +1,9 @@
-import { BadRequestException, HttpException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { homedir } from 'node:os';
 import type { AppToolDefinition } from '../app-mcp/app-mcp.js';
@@ -15,8 +20,10 @@ import type {
   UserTurn,
 } from '../providers/provider.js';
 import { ProvidersService } from '../providers/providers.service.js';
+import { RunConfig } from '../runs/run-config.js';
 import type { AgentPolicy } from './policy.js';
 import { ProjectResourcesService } from './project-resources.service.js';
+import { trustedWorktreeCwd } from './trusted-cwd.js';
 
 export interface RunRequest {
   userId: number;
@@ -32,6 +39,11 @@ export interface RunRequest {
   model?: string;
   /** One of the chosen model's effort levels. */
   effort?: string;
+  /**
+   * The working folder of a mission's agent: a worktree under
+   * `DATA_DIR/worktrees/<projectId>`. Set by the backend only, never by input.
+   */
+  cwd?: string;
   /** Tools of this run that aren't catalog resources, e.g. the mission tools. */
   appTools?: AppToolDefinition[];
   /** What those tools know about the run. */
@@ -116,6 +128,7 @@ export class AgentRunnerService {
     private readonly resources: ProjectResourcesService,
     private readonly providers: ProvidersService,
     private readonly connections: ConnectionsService,
+    private readonly runConfig: RunConfig,
   ) {}
 
   private workspaceRoot() {
@@ -249,7 +262,13 @@ export class AgentRunnerService {
       : req.agent
         ? await this.agentFor(req.userId, req.project.id, req.agent)
         : null;
-    const cwd = await resolveWorkspace(req.project.path, this.workspaceRoot());
+    const cwd = req.cwd
+      ? await trustedWorktreeCwd(
+          await this.runConfig.resolvedDataDir(),
+          req.project.id,
+          req.cwd,
+        )
+      : await resolveWorkspace(req.project.path, this.workspaceRoot());
     const { provider, model, sessionId } = await this.target(
       req,
       chosen?.agent,

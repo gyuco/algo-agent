@@ -7,6 +7,10 @@ import {
 export interface MissionToolContext {
   missionId: number;
   runId: number;
+  /** Set for a task's run: its worktree and the commit its diff starts from. */
+  taskId?: number;
+  worktree?: string;
+  taskBase?: string;
 }
 
 /** What a tool knows about the run it serves. */

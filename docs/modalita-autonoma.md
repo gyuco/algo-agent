@@ -108,6 +108,7 @@ Fissate con l'utente prima di scrivere questo documento:
 | `sessionId` | String? | Sessione Claude dell'orchestratore. Si riprende nel briefing e dentro una milestone; a ogni milestone nuova ne parte una nuova (§8.3). |
 | `fromSession` | String? | Conversazione di chat da cui è nata (`<provider>:<id>`), per il collegamento in chat (§13.2). |
 | `baseBranch` | String? | Destinazione della PR; si legge `develop` se esiste, altrimenti il branch di default del remote, altrimenti quello corrente. Null per un progetto senza git: la missione non può partire. |
+| `baseCommit` | String? | Commit da cui parte il branch della missione: il perimetro e la PR misurano da qui. |
 | `branch` | String? | `mission/<id>-<slug>`, creato nella preparazione dopo l'approvazione (fase 2). |
 | `worktreePath` | String? | Worktree del branch della missione, dove l'integratore unisce i task. |
 | `prUrl` | String? | |
@@ -151,7 +152,8 @@ Registro della missione, in sola aggiunta.
 
 - Nuovi valori di `kind`:
   - `mission-task`: il grafo di un task (§6);
-  - `mission-orchestrator`: un turno dell'orchestratore.
+  - `mission-orchestrator`: un turno dell'orchestratore;
+  - `mission-prepare`: la preparazione dopo l'approvazione (branch, worktree, controllo di base).
 - Nuovi campi `missionId` e `missionTaskId`, facoltativi, con indice. `missionId` è `Cascade`
   verso `Mission`; `missionTaskId` è `SetNull` verso `MissionTask`.
 
@@ -178,6 +180,8 @@ checks:
   build: npm run build
   lint: npm run lint
   test: npm test
+  testFilter: "-- {{pattern}}"  # facoltativo: come passare un filtro a test (run_checks)
+  secrets: [DATABASE_URL]       # facoltativo: segreti del vault esposti ai comandi
   parallel: false               # i controlli non possono girare in parallelo (porte, DB di sviluppo)
   workdir: backend              # facoltativo; ogni comando può avere il suo
 team:
@@ -228,7 +232,13 @@ Regole di validazione:
 - in ogni task, l'agente che giudica `result` è diverso da quelli che scrivono, anche dopo le
   sostituzioni di `agents`;
 - `checks.test` è obbligatorio;
-- se il progetto usa git, `baseBranch` esiste in locale o su `origin`.
+- `checks.testFilter`, se c'è, contiene `{{pattern}}`; `checks.secrets` nomina segreti che
+  esistono nel vault;
+- i comandi non sono righe di shell: niente `&&`, `||`, `;`, `|`, redirezioni, `$VAR`,
+  backtick, glob non quotati o `~` iniziale. Si usa `checks.workdir` al posto di `cd x && …`, e
+  le sequenze vanno in uno script di `package.json`;
+- se il progetto usa git, `baseBranch` è un nome di branch valido ed esiste in locale o su
+  `origin`.
 
 **I comandi sono nel piano, non negli agenti.** Oggi gli agenti non hanno shell, ed è una scelta
 di sicurezza (`policy.ts`: un comando non si può confinare in una cartella). Restano senza
@@ -354,11 +364,12 @@ dopo aver deciso da dove prendono i comandi: oggi un workflow non ha un piano.
 ### 7.1 Stati della missione
 
 ```
-briefing ⇄ planned ──(approva)──▶ approved ──(fase 2)──▶ running ──▶ integrating ──▶ done
-   ▲                                  │                    │  ▲
-   └──────(Rivedi il piano)───────────┘                    ▼  │
-                                                       waiting ┘
-                                                paused (5 ore) ──(reset)──▶ running
+briefing ⇄ planned ──(approva)──▶ approved ──(prepare ok)──▶ running ──▶ integrating ──▶ done
+   ▲                                  │  ▲                    │  ▲
+   └──────(Rivedi il piano)───────────┘  │(Riprova)           ▼  │
+                             (prepare ko)│               waiting ┘
+                                          ▼            paused (5 ore) ──(reset)──▶ running
+                                  waiting {baseline}
    ogni stato ──(Ferma)──▶ aborted · errore non recuperabile ──▶ failed
 ```
 
@@ -366,7 +377,7 @@ briefing ⇄ planned ──(approva)──▶ approved ──(fase 2)──▶ r
 |---|---|
 | `briefing` | Intervista in corso: l'utente e l'orchestratore si scambiano messaggi. |
 | `planned` | C'è un piano proposto che aspetta l'approvazione. Un commento riporta la missione in `briefing`. |
-| `approved` | Piano approvato. In fase 1 è lo stato finale; dalla fase 2 prepara branch, worktree e controllo di base, poi passa a `running`. |
+| `approved` | Piano approvato, preparazione in corso o da riprovare: branch, worktree e controllo di base. Se il controllo fallisce passa a `waiting { baseline }`; "Riprova" torna qui. |
 | `running` | Task in corso o pronti. |
 | `waiting` | Serve l'utente; il motivo è in `waitJson` (§7.2). I task già in corso finiscono. |
 | `paused` | Finestra delle 5 ore sotto soglia; riparte da sola dopo `until` (§9). |
@@ -456,16 +467,23 @@ restituisce all'agente il motivo, così può correggere prima della verifica.
   - scrittura solo nel worktree e in una cartella temporanea per comando; lettura negata su
     `~/.ssh`, `~/.claude`, `~/.config`, `DATA_DIR` e gli altri progetti;
   - `HOME` finta (la cartella temporanea), non quella dell'utente;
-  - rete chiusa, tranne per `checks.setup`, che ha accesso solo al registry dei pacchetti;
-  - su macOS con `sandbox-exec` e un profilo generato per il worktree, su Linux con un
-    container o `bwrap`. Se il sandbox non è disponibile, le missioni non partono: nessun
-    fallback senza isolamento.
+  - rete chiusa, tranne in `checks.setup`: `sandbox-exec` non filtra per nome host, quindi
+    `setup` ha la rete aperta del tutto;
+  - le negazioni in lettura sono una lista (credenziali, `DATA_DIR`, gli altri progetti), non
+    un'allowlist: node, nvm e Homebrew vivono in `HOME` e in `/opt`. Di `DATA_DIR` e dei
+    progetti restano leggibili solo i metadati, perché npm e git devono risolvere i percorsi;
+  - su macOS con `sandbox-exec` e un profilo generato per ogni esecuzione, su Linux con un
+    container o `bwrap` (non ancora fatto). Se il sandbox non è disponibile, le missioni non
+    si approvano: nessun fallback senza isolamento. La prova è in
+    [sandbox-prova.md](sandbox-prova.md).
 - L'ambiente è minimo: `PATH`, la `HOME` finta e `CI=1`. Le variabili del backend e i segreti
   non passano, a meno che il piano non nomini segreti del vault da esporre.
 - L'output viene tagliato agli ultimi N KB per comando, che sono la parte utile nei fallimenti.
 - `checks.setup` gira una volta per worktree, prima del primo controllo, dopo il controllo del
-  perimetro (§7.4). Per npm il backend aggiunge `--ignore-scripts` quando `scope.dependencies`
-  non è vuoto: gli script di installazione delle dipendenze nuove non partono.
+  perimetro (§7.4); un marcatore fuori dal worktree ricorda comando e lockfile, così rigira solo
+  se cambiano. Per npm il backend aggiunge `--ignore-scripts` quando `scope.dependencies` non è
+  vuoto: gli script di installazione delle dipendenze nuove non partono. Per la base si tengono:
+  senza, alcuni progetti (Prisma) non generano il client.
 - `checks.parallel: false` attiva un lock per progetto: i controlli di due task dello stesso
   progetto, anche di missioni diverse, non girano insieme. Serve quando i test usano porte fisse
   o un database di sviluppo condiviso.
@@ -507,7 +525,8 @@ approvato, decisioni registrate, report dei task chiusi e stato dei controlli.
 
 - **Approvazione e preparazione** (dalla fase 2):
   - `git fetch`;
-  - branch `mission/<id>-<slug>` da `origin/<baseBranch>`;
+  - branch `mission/<id>-<slug>` da `origin/<baseBranch>` se c'è un `origin` (con `git fetch`),
+    altrimenti dal branch locale;
   - worktree della missione in `DATA_DIR/worktrees/<projectId>/<missionId>/main`;
   - **controllo di base**: `checks.setup` e tutti i controlli sul worktree della missione. Se
     falliscono, la missione va in `waiting` con il motivo `baseline` (§7.2): con i test già
@@ -518,8 +537,8 @@ approvato, decisioni registrate, report dei task chiusi e stato dei controlli.
   confinazione di `pathViolation` resta la stessa.
 - **Chiusura di un task**: commit con messaggio dal titolo del task e trailer
   `Mission: <id>`, `Task: <key>`. Ogni comando git del backend gira con
-  `-c core.hooksPath=/dev/null`: gli hook del repository (husky e simili) eseguirebbero codice
-  del worktree fuori dal sandbox.
+  `-c core.hooksPath=/dev/null`, fuori dal sandbox: gli hook del repository (husky e simili)
+  eseguirebbero codice del worktree senza isolamento.
 - **Unione**: `git merge --no-ff` nel worktree della missione.
   - In caso di conflitto, il backend lascia i file in conflitto e chiama l'**integratore** con i
     due diff e i criteri dei task coinvolti. Poi rifà i controlli completi.
@@ -711,18 +730,19 @@ Solo in-app (decisione 10). Le genera il registro: ogni `MissionEntry` con `noti
 | `POST` | `/projects/:projectId/missions` | `{ input, mode, orchestratorModel, attachments, fromSession? }`. Crea la missione in `briefing` e il primo turno. Con `fromSession` la conversazione di chat diventa l'inizio del briefing (§13.2). |
 | `POST` | `/missions/new-project` | Come sopra, più `{ name, forge, namespace, visibility }`. |
 | `GET` | `/missions?status=&projectId=` | Missioni dell'utente. |
-| `GET` | `/missions/:id` | Missione, piano, task, budget. |
+| `GET` | `/missions/:id` | Missione, piano, task, budget; `baseCommit` e la preparazione attiva (`preparation: { runId }`). |
 | `GET` | `/missions/:id/entries` | Registro. |
+| `GET` | `/system/sandbox` | `{ available, reason? }`: il frontend disattiva Approva quando il sandbox non c'è. |
 | `GET` | `/missions/:id/events?after=` | SSE: cambi di stato della missione e dei task, nuove righe del registro, budget. Il cursore è l'id di `MissionEntry`; i cambi di stato sono a loro volta righe del registro, senza notifica. Il dettaglio dei task si segue sui loro run (`/runs/:id/events`). |
 | `POST` | `/missions/:id/messages` | `{ text, attachments }`. Risposta nel briefing o commento al piano: da `planned` la missione torna in `briefing`. Crea un run `mission-orchestrator`; 409 con un turno in corso. |
-| `POST` | `/missions/:id/approve` | `{ planVersion, mode }`: 409 se la versione è superata, la missione non è `planned` o il piano non è più valido (template disattivato, provider scollegato); in quest'ultimo caso la risposta elenca gli errori. Salva `mode`, `approvedVersion` e `approvedAt`. |
-| `POST` | `/missions/:id/revise` | Da `approved`: torna in `briefing` per rivedere il piano. `approvedVersion` resta finché non c'è una nuova approvazione. |
+| `POST` | `/missions/:id/approve` | `{ planVersion, mode }`: 409 se la versione è superata, la missione non è `planned`, il piano non è più valido (template disattivato, provider scollegato), manca il sandbox o il progetto non è un repository git con un `baseBranch` valido. Salva `mode`, `approvedVersion` e `approvedAt`, poi accoda `mission-prepare`. |
+| `POST` | `/missions/:id/revise` | Da `approved` o `waiting { baseline }`: ferma la preparazione, cancella worktree e branch, torna in `briefing`. `approvedVersion` resta finché non c'è una nuova approvazione. |
 | `POST` | `/missions/:id/tasks/:key/ok` | |
 | `POST` | `/missions/:id/tasks/:key/redo` | `{ note }` |
 | `POST` | `/missions/:id/tasks/:key/skip` | Solo per i task `blocked`; i task che dipendono da lui partono con l'avviso, come i passi saltati. |
 | `POST` | `/missions/:id/scope/accept` | Allarga il perimetro e registra la decisione. |
 | `POST` | `/missions/:id/continue` | Dopo `weekly_budget`. Se è stato raggiunto il tetto globale (§9.3), risponde 409 fino al reset della settimana. |
-| `POST` | `/missions/:id/baseline/retry` | Dopo `baseline`: aggiorna il branch della missione da `origin/<baseBranch>` e rifà il controllo di base. |
+| `POST` | `/missions/:id/baseline/retry` | Dopo `baseline`: ricalcola la base (`origin/<baseBranch>` o il branch locale) e, se è cambiata, riporta il worktree lì; poi rifà la preparazione. 409 se il worktree ha lavoro non unito. |
 | `POST` | `/missions/:id/mode` | `{ mode }`. Dalla fase 3, per missioni approvate o in corso. |
 | `POST` | `/missions/:id/abort` | Ferma il turno in corso; `aborted`. Branch e worktree restano. |
 | `DELETE` | `/missions/:id` | Nella fase 1 solo `aborted` o `approved`; dalla fase 2 le missioni finite. Cancella worktree e branch locali dei task. |
@@ -799,9 +819,9 @@ meccanismo di `seq`.
 2. **Dipendenze nei worktree**: `checks.setup` con `npm ci` per ogni worktree costa tempo e
    disco. Si potrà valutare una cache condivisa o il riuso di `node_modules` dal worktree della
    missione.
-3. **Sandbox dei controlli** (§8.2): verificare che `sandbox-exec`, deprecato ma ancora
-   presente su macOS, regga i toolchain comuni (npm, Prisma, test con porte locali), e scegliere
-   tra container e `bwrap` su Linux.
+3. **Sandbox dei controlli** (§8.2): su macOS la prova con npm, Prisma e test su porte locali
+   passa (`sandbox-prova.md`); `sandbox-exec` è deprecato. Resta da scegliere container o
+   `bwrap` su Linux, e da decidere se le negazioni in lettura bastino o serva un'allowlist.
 4. **Attribuzione della quota settimanale** (§9.3): da verificare sul campo quanto la stima si
    discosta dal reale con più missioni in parallelo.
 5. **Limiti di `protect`**: non impedisce di cambiare la configurazione dei test (ad esempio
@@ -809,6 +829,8 @@ meccanismo di `seq`.
    aggiungere la configurazione dei test a `scope.tests`.
 6. **Test end-to-end** nel browser: esclusi per ora (decisione 7); si possono aggiungere come
    comando `checks.e2e` senza cambiare il modello.
+7. **Perimetro degli altri ecosistemi**: il controllo delle dipendenze legge solo
+   `package.json`; `requirements.txt`, `go.mod` e `Cargo.toml` non sono coperti.
 
 ## 15. Test
 

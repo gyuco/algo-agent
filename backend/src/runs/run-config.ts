@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { mkdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RunLimits } from './limits.js';
 
@@ -38,6 +39,16 @@ export class RunConfig {
     return this.int('RUNS_APPROVAL_TIMEOUT_HOURS', 72) * 60 * 60 * 1000;
   }
 
+  /** Per command of the plan, `setup` included. */
+  missionCheckTimeoutMs() {
+    return this.int('MISSION_CHECK_TIMEOUT_MS', 600_000);
+  }
+
+  /** How much of a command's output is kept, its tail. */
+  missionCheckOutputKb() {
+    return this.int('MISSION_CHECK_OUTPUT_KB', 64);
+  }
+
   eventsRetentionDays() {
     return this.int('RUN_EVENTS_RETENTION_DAYS', 14);
   }
@@ -45,5 +56,20 @@ export class RunConfig {
   /** Where runs keep files between the request and their start, e.g. chat attachments. */
   dataDir() {
     return this.config.get<string>('DATA_DIR') || join(process.cwd(), 'data');
+  }
+
+  private resolvedDir: Promise<string> | null = null;
+
+  /**
+   * `dataDir()` with symlinks followed, once: worktrees live here and the
+   * sandbox compares resolved paths (`/var` is `/private/var` on macOS).
+   */
+  resolvedDataDir(): Promise<string> {
+    this.resolvedDir ??= (async () => {
+      const dir = this.dataDir();
+      await mkdir(dir, { recursive: true });
+      return realpath(dir);
+    })();
+    return this.resolvedDir;
   }
 }

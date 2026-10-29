@@ -2,7 +2,7 @@ import { api, apiEvents } from '../api/client'
 import type { Attachment } from '../chat/attachments'
 import { reconnecting } from '../runs/api'
 
-export type MissionStatus = 'briefing' | 'planned' | 'approved' | 'aborted'
+export type MissionStatus = 'briefing' | 'planned' | 'approved' | 'running' | 'waiting' | 'aborted'
 export type MissionMode = 'step' | 'auto'
 export type OrchestratorModel = 'claude:opus' | 'claude:sonnet'
 
@@ -52,6 +52,10 @@ export interface Plan {
     build?: PlanCommand
     lint?: PlanCommand
     test: PlanCommand
+    /** Appended to `test` by run_checks; carries {{pattern}}. */
+    testFilter?: string
+    /** Names of vault secrets exposed to the commands. */
+    secrets: string[]
     parallel: boolean
     workdir?: string
   }
@@ -80,10 +84,18 @@ export interface Mission {
   sessionId: string | null
   fromSession: string | null
   baseBranch: string | null
+  /** The commit the mission's branch started from. */
+  baseCommit: string | null
   branch: string | null
   worktreePath: string | null
   prUrl: string | null
-  wait: { code: string; entryId?: number; detail?: string } | null
+  wait: {
+    code: string
+    entryId?: number
+    runId?: number
+    step?: string
+    detail?: string
+  } | null
   budgetJson: string
   costUsd: number
   createdAt: string
@@ -97,6 +109,8 @@ export interface Mission {
   planEstimate?: number
   /** The run of the first turn, on creation. */
   runId?: number
+  /** Present on GET /missions/:id: the active preparation, if any. */
+  preparation?: { runId: number } | null
 }
 
 export type MissionEntryKind =
@@ -155,6 +169,8 @@ export const missionsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  retryBaseline: (id: number) =>
+    api<Mission>(`/missions/${id}/baseline/retry`, { method: 'POST' }),
   revise: (id: number) =>
     api<Mission>(`/missions/${id}/revise`, { method: 'POST' }),
   abort: (id: number) =>
@@ -171,11 +187,16 @@ export const missionsApi = {
       (seq) => (cursor = seq),
     )
   },
+
+  /** Whether checks can run on this machine: Approve stays off without it. */
+  sandbox: () => api<{ available: boolean; reason?: string }>('/system/sandbox'),
 }
 
 export const MISSION_STATUS_KEY = {
   briefing: 'missions.status.briefing',
   planned: 'missions.status.planned',
   approved: 'missions.status.approved',
+  running: 'missions.status.running',
+  waiting: 'missions.status.waiting',
   aborted: 'missions.status.aborted',
 } as const

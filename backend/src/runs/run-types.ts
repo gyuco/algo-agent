@@ -1,4 +1,5 @@
 import type { Run } from '../generated/prisma/client.js';
+import type { CheckName } from '../missions/checks.service.js';
 import type { ChatEvent } from '../providers/provider.js';
 import type { StepStatus } from './run-steps.js';
 
@@ -6,7 +7,8 @@ export type RunKind =
   | 'workflow'
   | 'chat'
   | 'mission-orchestrator'
-  | 'mission-task';
+  | 'mission-task'
+  | 'mission-prepare';
 
 export type RunStatus =
   | 'queued'
@@ -49,7 +51,20 @@ export type RunEventData =
       prompt: string;
       writes: boolean;
     }
+  | { type: 'check_output'; name: CheckName; text: string }
+  | {
+      type: 'prepare_step';
+      step: PrepareStep;
+      status: 'started' | 'done' | 'failed' | 'skipped';
+      detail?: string;
+    }
   | { type: 'finished'; status: RunStatus };
+
+/** The steps of a mission's preparation, in the order they run. */
+export type PrepareStep =
+  'fetch' | 'branch' | 'worktree' | 'setup' | 'build' | 'lint' | 'test';
+
+export type { CheckName };
 
 /** An event as clients receive it: `seq` is the cursor to resume from. */
 export interface SequencedEvent {

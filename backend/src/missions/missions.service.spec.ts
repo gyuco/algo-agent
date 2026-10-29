@@ -51,6 +51,9 @@ function service(updated = 1) {
     { saveAttachments: async () => undefined } as never,
     {} as never,
     deps.bus as never,
+    {} as never,
+    {} as never,
+    {} as never,
   );
   return { missions, prisma, queue, release };
 }
@@ -68,9 +71,9 @@ describe('MissionsService.messages', () => {
 
   it('refuses when the mission changed meanwhile, without queueing', async () => {
     const { missions, queue } = service(0);
-    await expect(missions.messages(1, 7, { text: 'sì' })).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      missions.messages(1, 7, { text: 'sì' }),
+    ).rejects.toBeInstanceOf(ConflictException);
     expect(queue.enqueue).not.toHaveBeenCalled();
   });
 });

@@ -3,12 +3,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { rm } from 'node:fs/promises';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { listFolders, resolveWorkspace } from '../chat/workspace.js';
+import { GitService } from '../missions/git-service.js';
+import { setupMarker } from '../missions/mission-paths.js';
 import { ProjectDto } from './dto/project.dto.js';
 
 const PUBLIC_FIELDS = {
@@ -24,6 +28,7 @@ export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   private workspaceRoot() {
@@ -70,7 +75,39 @@ export class ProjectsService {
   }
 
   async remove(userId: number, id: number) {
-    await this.findOwned(userId, id);
+    const project = await this.findOwned(userId, id);
+    const missions = await this.prisma.mission.findMany({
+      where: { projectId: id },
+      select: { id: true, status: true, branch: true, worktreePath: true },
+    });
+    // A mission still preparing or running would lose its worktree under it.
+    if (
+      missions.some((m) =>
+        ['approved', 'running', 'waiting'].includes(m.status),
+      )
+    ) {
+      throw new ConflictException(
+        'Il progetto ha una missione in corso: fermala prima di cancellarlo',
+      );
+    }
+
+    const git = this.moduleRef.get(GitService, { strict: false });
+    for (const mission of missions) {
+      if (mission.worktreePath) {
+        await git
+          .removeWorktree(project.path, mission.worktreePath)
+          .catch(() => undefined);
+        await rm(setupMarker(mission.worktreePath), { force: true }).catch(
+          () => undefined,
+        );
+      }
+      if (mission.branch) {
+        await git
+          .deleteBranch(project.path, mission.branch)
+          .catch(() => undefined);
+      }
+    }
+
     await this.prisma.project.delete({ where: { id } });
   }
 

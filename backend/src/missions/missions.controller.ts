@@ -101,6 +101,16 @@ export class MissionsController {
     return this.missions.approve(req.user.sub, id, dto);
   }
 
+  /** After `baseline`: a new base, then the preparation again. */
+  @Post(':id/baseline/retry')
+  @HttpCode(HttpStatus.OK)
+  retryBaseline(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.missions.retryBaseline(req.user.sub, id);
+  }
+
   @Post(':id/revise')
   @HttpCode(HttpStatus.OK)
   revise(

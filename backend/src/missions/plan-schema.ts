@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TEST_PATTERN_MARKER } from './command-line.js';
 
 const keySchema = z
   .string()
@@ -108,6 +109,28 @@ export const planSchema = z
         build: commandSchema.optional(),
         lint: commandSchema.optional(),
         test: commandSchema,
+        /** Appended to `test` by `run_checks`; must carry `{{pattern}}`. */
+        testFilter: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .refine(
+            (filter) => filter.includes(TEST_PATTERN_MARKER),
+            `deve contenere ${TEST_PATTERN_MARKER}`,
+          )
+          .optional(),
+        /** Names of vault secrets exposed to the commands, never to the logs. */
+        secrets: z
+          .array(
+            z
+              .string()
+              .regex(
+                /^[A-Za-z_][A-Za-z0-9_]{0,63}$/,
+                'lettere, cifre e _, non inizia con una cifra',
+              ),
+          )
+          .default([]),
         /** Checks of the same project never run together: fixed ports, a shared dev database. */
         parallel: z.boolean().default(false),
         // Each command may carry its own workdir; this one is the default.

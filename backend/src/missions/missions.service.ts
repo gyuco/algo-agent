@@ -3,18 +3,18 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { AgentRunnerService } from '../agents/agent-runner.service.js';
 import { ProjectResourcesService } from '../agents/project-resources.service.js';
 import type { AgentSpec } from '../catalog/catalog.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { resolveWorkspace } from '../chat/workspace.js';
-import type {
-  Mission,
-  MissionEntry,
-} from '../generated/prisma/client.js';
+import type { Mission, MissionEntry } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { formatRef, parseRef } from '../providers/model-ref.js';
 import type { HistoryMessage } from '../providers/provider.js';
@@ -22,6 +22,7 @@ import { ProvidersService } from '../providers/providers.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { channel } from '../runs/run-event-bus.js';
 import { RunFiles } from '../runs/run-files.js';
+import { RunConfig } from '../runs/run-config.js';
 import { RunQueueService } from '../runs/run-queue.service.js';
 import { ACTIVE_STATUSES } from '../runs/run-types.js';
 import { RunsService } from '../runs/runs.service.js';
@@ -31,14 +32,24 @@ import type {
   MissionMessageDto,
   MissionsQueryDto,
 } from './dto/mission.dto.js';
-import { resolveBaseBranch } from './git-read.js';
+import { GitService } from './git-service.js';
 import { MissionEventBus } from './mission-event-bus.js';
-import { briefingMessage, orchestratorSystemPrompt } from './orchestrator-prompt.js';
+import {
+  missionBranchName,
+  missionWorktreePath,
+  setupMarker,
+} from './mission-paths.js';
+import {
+  briefingMessage,
+  orchestratorSystemPrompt,
+} from './orchestrator-prompt.js';
 import { planSchema, type Plan } from './plan-schema.js';
 import { PlanValidationService } from './plan-validation.js';
+import { Sandbox } from './sandbox.js';
 
 const TITLE_LENGTH = 80;
 const TRANSCRIPT_LENGTH = 60_000;
+const RECONCILE_MS = 30_000;
 
 /** The orchestrator isn't a catalog agent: it exists only for missions. */
 export function orchestratorAgent(): AgentSpec {
@@ -56,9 +67,15 @@ export function orchestratorAgent(): AgentSpec {
 export type MissionView = ReturnType<MissionsService['view']>;
 
 @Injectable()
-export class MissionsService {
+export class MissionsService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   /** Missions whose next turn is being queued. In memory, like the event bus: one instance. */
   private readonly sending = new Set<number>();
+  /** Missions whose preparation is being queued: approve and reconciliation can meet here. */
+  private readonly preparing = new Set<number>();
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private reconcileStart: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -73,7 +90,40 @@ export class MissionsService {
     private readonly files: RunFiles,
     private readonly runs: RunsService,
     private readonly bus: MissionEventBus,
+    private readonly git: GitService,
+    private readonly sandbox: Sandbox,
+    private readonly runConfig: RunConfig,
   ) {}
+
+  onApplicationBootstrap() {
+    this.reconcileTimer = setInterval(
+      () => void this.reconcile(),
+      RECONCILE_MS,
+    );
+    this.reconcileTimer.unref();
+    // Let recovery close what the previous process left running first.
+    this.reconcileStart = setTimeout(() => void this.reconcile(), 1_000);
+    this.reconcileStart.unref();
+  }
+
+  onApplicationShutdown() {
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    if (this.reconcileStart) clearTimeout(this.reconcileStart);
+  }
+
+  /**
+   * Re-queues the preparation of every approved mission without an active
+   * `mission-prepare`: a restart or a lost process left it there.
+   */
+  async reconcile() {
+    const missions = await this.prisma.mission.findMany({
+      where: { status: 'approved' },
+      select: { id: true },
+    });
+    for (const mission of missions) {
+      await this.queuePrepare(mission.id).catch(() => undefined);
+    }
+  }
 
   private workspaceRoot() {
     return this.config.get<string>('WORKSPACE_ROOT') || homedir();
@@ -84,9 +134,7 @@ export class MissionsService {
     return {
       ...rest,
       plan: planJson ? (JSON.parse(planJson) as Plan) : null,
-      wait: waitJson
-        ? (JSON.parse(waitJson) as Record<string, unknown>)
-        : null,
+      wait: waitJson ? (JSON.parse(waitJson) as Record<string, unknown>) : null,
     };
   }
 
@@ -143,12 +191,18 @@ export class MissionsService {
 
   async get(userId: number, id: number) {
     const mission = await this.find(userId, id);
-    return this.withValidation(userId, mission);
+    const view = await this.withValidation(userId, mission);
+    const preparation = await this.activePrepare(id);
+    return {
+      ...view,
+      preparation: preparation ? { runId: preparation.id } : null,
+    };
   }
 
   private async withValidation(userId: number, mission: Mission) {
     const view = this.view(mission);
-    if (!mission.planJson) return { ...view, validationErrors: [], planEstimate: 0 };
+    if (!mission.planJson)
+      return { ...view, validationErrors: [], planEstimate: 0 };
     const plan = planSchema.safeParse(JSON.parse(mission.planJson));
     if (!plan.success) {
       return {
@@ -173,7 +227,11 @@ export class MissionsService {
       catalog,
       enabled,
     );
-    return { ...view, validationErrors: result.errors, planEstimate: result.sessions };
+    return {
+      ...view,
+      validationErrors: result.errors,
+      planEstimate: result.sessions,
+    };
   }
 
   private async context(userId: number, projectId: number) {
@@ -224,12 +282,15 @@ export class MissionsService {
     const from = dto.fromSession
       ? await this.fromConversation(userId, project, dto.fromSession)
       : null;
-    const attachments = [...(dto.attachments ?? []), ...(from?.attachments ?? [])].slice(-5);
+    const attachments = [
+      ...(dto.attachments ?? []),
+      ...(from?.attachments ?? []),
+    ].slice(-5);
     if (!dto.input && !attachments.length && !from) {
       throw new BadRequestException('Scrivi cosa vuoi ottenere');
     }
 
-    const baseBranch = await resolveBaseBranch(project.path);
+    const baseBranch = await this.git.resolveBaseBranch(project.path);
     const input = dto.input ?? '';
     const title =
       input.trim().slice(0, TITLE_LENGTH) ||
@@ -279,7 +340,9 @@ export class MissionsService {
       return { ...this.view(mission), runId: run.id };
     } catch (error) {
       // Don't leave a mission without its first turn.
-      await this.prisma.mission.delete({ where: { id: mission.id } }).catch(() => undefined);
+      await this.prisma.mission
+        .delete({ where: { id: mission.id } })
+        .catch(() => undefined);
       throw error;
     }
   }
@@ -357,14 +420,19 @@ export class MissionsService {
       orderBy: { id: 'desc' },
     });
     return {
-      title: history.find((m) => m.role === 'user')?.text.slice(0, TITLE_LENGTH),
+      title: history
+        .find((m) => m.role === 'user')
+        ?.text.slice(0, TITLE_LENGTH),
       transcript: this.transcript(history),
       attachments: await this.conversationAttachments(ownRef, chatRun?.id),
     };
   }
 
   /** The conversation's files: those saved after a finished turn, then a turn still running. */
-  private async conversationAttachments(sessionId: string, activeRunId?: number) {
+  private async conversationAttachments(
+    sessionId: string,
+    activeRunId?: number,
+  ) {
     const stored = await this.files.sessionAttachments(sessionId);
     const live = activeRunId ? await this.files.attachments(activeRunId) : [];
     const seen = new Set<string>();
@@ -464,16 +532,18 @@ export class MissionsService {
   async approve(userId: number, id: number, dto: ApproveMissionDto) {
     const mission = await this.find(userId, id);
     if (mission.status !== 'planned') {
-      throw new ConflictException('La missione non aspetta un\'approvazione');
+      throw new ConflictException("La missione non aspetta un'approvazione");
     }
     if (mission.planVersion !== dto.planVersion) {
-      throw new ConflictException(
-        'Il piano è cambiato: ricarica e riprova',
-      );
+      throw new ConflictException('Il piano è cambiato: ricarica e riprova');
     }
-    const plan = mission.planJson ? planSchema.safeParse(JSON.parse(mission.planJson)) : null;
+    const plan = mission.planJson
+      ? planSchema.safeParse(JSON.parse(mission.planJson))
+      : null;
     if (!plan?.success) {
-      throw new ConflictException('Il piano non è più leggibile: chiedine uno nuovo');
+      throw new ConflictException(
+        'Il piano non è più leggibile: chiedine uno nuovo',
+      );
     }
     const project = await this.projects.get(userId, mission.projectId);
     const { catalog, enabled } = await this.context(userId, mission.projectId);
@@ -490,6 +560,25 @@ export class MissionsService {
         errors: result.errors,
       });
     }
+
+    const sandbox = await this.sandbox.available();
+    if (!sandbox.available) {
+      throw new ConflictException(
+        `Le missioni richiedono il sandbox, non disponibile su questo sistema${sandbox.reason ? `: ${sandbox.reason}` : ''}`,
+      );
+    }
+
+    // §1.7: from this phase a mission needs a git repository and a valid base branch.
+    const baseBranch = plan.data.baseBranch ?? mission.baseBranch;
+    if (!baseBranch || !(await this.git.isRepository(project.path))) {
+      throw new ConflictException('Serve un repository git');
+    }
+    if (!(await this.git.checkRefFormat(project.path, baseBranch))) {
+      throw new ConflictException(
+        `Il branch base "${baseBranch}" non è valido`,
+      );
+    }
+
     const { count } = await this.prisma.mission.updateMany({
       where: {
         id,
@@ -504,31 +593,167 @@ export class MissionsService {
         approvedAt: new Date(),
         waitJson: null,
         budgetJson: JSON.stringify(plan.data.budget),
-        baseBranch: mission.baseBranch
-          ? (plan.data.baseBranch ?? mission.baseBranch)
-          : null,
+        baseBranch,
       },
     });
-    if (!count) throw new ConflictException('Il piano è cambiato: ricarica e riprova');
+    if (!count)
+      throw new ConflictException('Il piano è cambiato: ricarica e riprova');
     await this.entry(id, 'status', {
       status: 'approved',
       version: dto.planVersion,
       mode: dto.mode,
     });
+    await this.queuePrepare(id);
     return this.get(userId, id);
   }
 
-  async revise(userId: number, id: number) {
-    await this.find(userId, id);
+  /** `POST /missions/:id/baseline/retry`: new base, then the preparation again. */
+  async retryBaseline(userId: number, id: number) {
+    const mission = await this.find(userId, id);
+    const wait = mission.waitJson
+      ? (JSON.parse(mission.waitJson) as { code?: string })
+      : null;
+    if (mission.status !== 'waiting' || wait?.code !== 'baseline') {
+      throw new ConflictException(
+        'La missione non aspetta un nuovo controllo di base',
+      );
+    }
+    const project = await this.projects.get(userId, mission.projectId);
+    if (!mission.baseBranch)
+      throw new ConflictException('Serve un repository git');
+
+    const base = await this.git.baseRef(project.path, mission.baseBranch);
+    const baseCommit = base.ref
+      ? await this.git.revParse(project.path, base.ref)
+      : null;
+    if (!baseCommit) {
+      throw new ConflictException(
+        `Il branch "${mission.baseBranch}" non esiste in locale né su origin`,
+      );
+    }
+    if (mission.worktreePath && baseCommit !== mission.baseCommit) {
+      const ahead = mission.baseCommit
+        ? await this.git.aheadOf(mission.worktreePath, mission.baseCommit)
+        : 0;
+      if (ahead > 0) {
+        throw new ConflictException(
+          'Il worktree ha lavoro non unito: non posso ripartire dal nuovo base',
+        );
+      }
+      await this.git.resetTo(mission.worktreePath, baseCommit);
+      await this.prisma.mission.update({
+        where: { id },
+        data: { baseCommit },
+      });
+    }
+
     const { count } = await this.prisma.mission.updateMany({
-      where: { id, userId, status: 'approved' },
-      data: { status: 'briefing', waitJson: null, approvedAt: null },
+      where: { id, userId, status: 'waiting' },
+      data: { status: 'approved', waitJson: null },
+    });
+    if (!count)
+      throw new ConflictException('La missione è cambiata: ricarica e riprova');
+    await this.entry(id, 'status', { status: 'approved', retry: true });
+    await this.queuePrepare(id);
+    return this.get(userId, id);
+  }
+
+  /** Queues one `mission-prepare` per mission, unless one is already active. */
+  private async queuePrepare(missionId: number) {
+    if (this.preparing.has(missionId)) return;
+    this.preparing.add(missionId);
+    try {
+      const mission = await this.prisma.mission.findFirst({
+        where: { id: missionId, status: 'approved' },
+      });
+      if (!mission) return;
+      if (await this.activePrepare(missionId)) return;
+      const run = await this.queue.enqueue({
+        projectId: mission.projectId,
+        userId: mission.userId,
+        kind: 'mission-prepare',
+        title: mission.title,
+        input: '',
+        writes: false,
+        missionId: mission.id,
+      });
+      await this.entry(mission.id, 'prepare', { runId: run.id });
+    } finally {
+      this.preparing.delete(missionId);
+    }
+  }
+
+  private activePrepare(missionId: number) {
+    return this.prisma.run.findFirst({
+      where: {
+        missionId,
+        kind: 'mission-prepare',
+        status: { in: ACTIVE_STATUSES },
+      },
+      orderBy: { id: 'desc' },
+    });
+  }
+
+  async revise(userId: number, id: number) {
+    const mission = await this.find(userId, id);
+    const wait = mission.waitJson
+      ? (JSON.parse(mission.waitJson) as { code?: string })
+      : null;
+    const reviewable =
+      mission.status === 'approved' ||
+      (mission.status === 'waiting' && wait?.code === 'baseline');
+    if (!reviewable) {
+      throw new ConflictException(
+        'Solo una missione approvata si può rivedere',
+      );
+    }
+    // Leave `approved` first: reconciliation must not queue a new preparation meanwhile.
+    const { count } = await this.prisma.mission.updateMany({
+      where: { id, userId, status: mission.status },
+      data: {
+        status: 'briefing',
+        waitJson: null,
+        approvedAt: null,
+        branch: null,
+        worktreePath: null,
+        baseCommit: null,
+      },
     });
     if (!count) {
-      throw new ConflictException('Solo una missione approvata si può rivedere');
+      throw new ConflictException('La missione è cambiata: ricarica e riprova');
     }
+    const active = await this.prisma.run.findMany({
+      where: { missionId: id, status: { in: ACTIVE_STATUSES } },
+      select: { id: true },
+    });
+    for (const run of active) await this.runs.abort(userId, run.id);
+    // Let the executor close them before the worktree disappears under a check.
+    for (let i = 0; i < 50; i++) {
+      const still = await this.prisma.run.count({
+        where: { missionId: id, status: { in: ACTIVE_STATUSES } },
+      });
+      if (!still) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await this.cleanupWorkspace(mission);
     await this.entry(id, 'status', { status: 'briefing' });
     return this.get(userId, id);
+  }
+
+  /** Removes the mission's worktree, branch and setup marker; missing ones are fine. */
+  private async cleanupWorkspace(mission: Mission) {
+    const project = await this.projects.get(mission.userId, mission.projectId);
+    const dataDir = await this.runConfig.resolvedDataDir();
+    const worktree =
+      mission.worktreePath ??
+      missionWorktreePath(dataDir, mission.projectId, mission.id);
+    const branch =
+      mission.branch ?? missionBranchName(mission.id, mission.title);
+    await this.git
+      .removeWorktree(project.path, worktree)
+      .catch(() => undefined);
+    await this.git.deleteBranch(project.path, branch).catch(() => undefined);
+    await rm(setupMarker(worktree), { force: true }).catch(() => undefined);
   }
 
   async abort(userId: number, id: number) {
@@ -563,7 +788,17 @@ export class MissionsService {
       }
       await this.files.remove(run.id);
     }
+    await this.cleanupWorkspace(mission);
     await this.prisma.mission.delete({ where: { id } });
   }
 
+  /** Appends to the mission's log and tells the clients following it. */
+  record(
+    missionId: number,
+    kind: string,
+    data: unknown,
+    extra: { taskId?: number; notify?: boolean } = {},
+  ) {
+    return this.entry(missionId, kind, data, extra);
+  }
 }

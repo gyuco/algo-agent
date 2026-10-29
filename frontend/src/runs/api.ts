@@ -6,6 +6,7 @@ export type RunKind =
   | 'chat'
   | 'mission-orchestrator'
   | 'mission-task'
+  | 'mission-prepare'
 
 export type RunStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'aborted' | 'interrupted'
 
@@ -19,6 +20,10 @@ export type WaitReason =
   | { code: 'user' }
   | { code: 'project' }
   | { code: 'rateLimit'; until: string }
+
+/** The steps of a mission's preparation, in the order they run. */
+export type PrepareStep = 'fetch' | 'branch' | 'worktree' | 'setup' | 'build' | 'lint' | 'test'
+export type MissionCheckName = 'setup' | 'build' | 'lint' | 'test'
 
 /** What a running run is doing: its step and its last action. */
 export interface RunActivity {
@@ -91,6 +96,15 @@ export type RunEvent =
   | { type: 'iteration_started'; id: string; agent: string; iteration: number; max: number }
   /** Logged by runs from before steps had ids. */
   | { type: 'step'; index: number; agent: string }
+  /** A mission's preparation: a step starting or ending. */
+  | {
+      type: 'prepare_step'
+      step: PrepareStep
+      status: 'started' | 'done' | 'failed' | 'skipped'
+      detail?: string
+    }
+  /** Live output of a preparation command, already masked. */
+  | { type: 'check_output'; name: MissionCheckName; text: string }
   | { type: 'finished'; status: RunStatus }
 
 /** What the user's activity stream sends. */

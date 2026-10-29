@@ -2144,6 +2144,40 @@ button.icon.copy:focus-visible {
   }
 }
 
+.mission-right,
+.mission-briefing,
+.mission-plan {
+  min-width: 0;
+}
+
+.mission-preparation,
+.mission-baseline,
+.mission-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.prepare-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prepare-steps > li {
+  border: 1px solid var(--line, #ddd);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.prepare-steps details {
+  margin-top: 6px;
+}
+
 .mission-briefing,
 .mission-plan {
   display: flex;

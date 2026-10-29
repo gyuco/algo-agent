@@ -22,8 +22,9 @@ export interface RunSlot {
 function perUserLimit(kind: string, limits: RunLimits): number | null {
   if (kind === 'chat') return limits.chatsPerUser;
   if (kind === 'workflow') return limits.workflowsPerUser;
-  // A mission takes one orchestrator turn at a time (the mission state guarantees it)
-  // and its tasks are governed by MISSIONS_MAX_RUNNING_TASKS (phase 3).
+  // A mission takes one orchestrator turn at a time (the mission state guarantees it);
+  // its preparation is one run per mission, and its tasks are governed by
+  // MISSIONS_MAX_RUNNING_TASKS (phase 3). They all count for `concurrent` only.
   return null;
 }
 
