@@ -2452,3 +2452,50 @@ button.icon.copy:focus-visible {
   background: var(--error-bg, #fde7e5);
   color: var(--error, #b3261e);
 }
+
+/* The new project dialog: a picker dialog that scrolls when the window is short. */
+dialog.new-project {
+  width: min(640px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
+dialog.new-project h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+dialog.new-project .stack {
+  gap: 0.875rem;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.875rem;
+}
+
+.field-grid select,
+.field-grid input {
+  width: 100%;
+}
+
+small.error {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.new-project-files {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+dialog.new-project .row.end {
+  margin-top: 0.25rem;
+}
+
+@media (max-width: 560px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -96,22 +96,6 @@ export class MissionMessageDto {
   attachments?: AttachmentDto[];
 }
 
-export class ApproveMissionDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  planVersion: number;
-
-  @IsIn(MISSION_MODES)
-  mode: MissionMode;
-
-  /** The user's thresholds: they win over the plan's, without changing its version. */
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => BudgetDto)
-  budget?: BudgetDto;
-}
-
 export class BudgetDto {
   @IsOptional()
   @IsNumber()
@@ -130,6 +114,22 @@ export class BudgetDto {
   @Min(0.01)
   @Max(100_000)
   maxUsd?: number;
+}
+
+export class ApproveMissionDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  planVersion: number;
+
+  @IsIn(MISSION_MODES)
+  mode: MissionMode;
+
+  /** The user's thresholds: they win over the plan's, without changing its version. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BudgetDto)
+  budget?: BudgetDto;
 }
 
 export class MissionModeDto {
