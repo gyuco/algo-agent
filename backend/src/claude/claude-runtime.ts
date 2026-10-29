@@ -18,7 +18,9 @@ import {
   toolCallViolation,
   type AgentPolicy,
 } from '../agents/policy.js';
+import type { AppToolDefinition } from '../app-mcp/app-mcp.js';
 import type { Catalog, McpSpec, SkillSpec } from '../catalog/catalog.js';
+import type { ToolContext } from '../catalog/app-tools.js';
 import { interpolate, skillFile } from '../catalog/runtime.js';
 import { IMAGE_TYPES } from '../chat/dto/chat.dto.js';
 import type { ChatEvent, Subagent, UserTurn } from '../providers/provider.js';
@@ -118,12 +120,19 @@ export function capabilities(
   cwd: string,
   pluginDir: string | null,
   subagents: Subagent[] = [],
+  appTools: AppToolDefinition[] = [],
+  toolContext?: ToolContext,
 ): Pick<Options, 'tools' | 'mcpServers' | 'skills' | 'plugins' | 'agents'> {
   const mcpServers: Record<string, McpServerConfig> = {};
-  if (policy.tools.length) {
+  if (policy.tools.length || appTools.length) {
     mcpServers[APP_SERVER] = createSdkMcpServer({
       name: APP_SERVER,
-      tools: policy.tools.map((k) => catalog.tools.get(k)!.create({ cwd })),
+      tools: [
+        ...policy.tools
+          .filter((k) => catalog.tools.has(k))
+          .map((k) => catalog.tools.get(k)!.create({ cwd, mission: toolContext?.mission })),
+        ...appTools,
+      ],
       alwaysLoad: true,
     });
   }
@@ -168,6 +177,7 @@ export function confine(
   policy: AgentPolicy,
   logger: Logger,
   subagents: Subagent[] = [],
+  turnClosed?: () => boolean,
 ): Pick<Options, 'hooks' | 'canUseTool'> {
   /** Subagent types by agent id, as Claude Code starts them. */
   const running = new Map<string, string>();
@@ -182,6 +192,7 @@ export function confine(
     agentId: string | undefined,
   ) => {
     const args = (input ?? {}) as Record<string, unknown>;
+    if (turnClosed?.()) return 'Il turno è chiuso';
     if (AGENT_TOOLS.includes(tool)) {
       return delegationViolation(subagents, Boolean(agentId), args);
     }

@@ -480,7 +480,7 @@ function followRename(steps: Step[], index: number, from: string): Step[] {
       ? s
       : {
           ...s,
-          prompt: s.prompt.replaceAll(`{{steps.${from}}}`, `{{steps.${to}}}`),
+          prompt: s.prompt?.replaceAll(`{{steps.${from}}}`, `{{steps.${to}}}`),
           needs: s.needs?.map((n) => (n === from ? to : n)),
           repeat: s.repeat?.with === from ? { ...s.repeat, with: to } : s.repeat,
         },
@@ -510,11 +510,13 @@ function StepOptions({
   step,
   index,
   steps,
+  task,
   onChange,
 }: {
   step: Step
   index: number
   steps: Step[]
+  task?: boolean
   onChange: (change: Partial<Step>) => void
 }) {
   const { t } = useI18n()
@@ -529,9 +531,45 @@ function StepOptions({
     repeat && onChange({ repeat: { ...repeat, ...change } })
 
   return (
-    <details open={Boolean(step.approval || step.verdict || repeat)}>
+    <details open={Boolean(step.approval || step.verdict || repeat || step.run || step.protect)}>
       <summary>{t('editor.advanced')}</summary>
       <div className="stack">
+        {task && (
+          <>
+            <label>
+              {t('editor.run')}
+              <input
+                value={(step.run ?? []).join(', ')}
+                placeholder="build, lint, test"
+                onChange={(e) => {
+                  const parsed = parseValues(e.target.value)
+                  onChange({ run: parsed.length ? parsed : undefined })
+                }}
+              />
+            </label>
+            <label>
+              {t('editor.expect')}
+              <select
+                value={step.expect ?? 'pass'}
+                onChange={(e) => onChange({ expect: e.target.value as Step['expect'] })}
+              >
+                <option value="pass">{t('editor.pass')}</option>
+                <option value="fail">{t('editor.fail')}</option>
+              </select>
+            </label>
+            <label>
+              {t('editor.protect')}
+              <input
+                value={(step.protect ?? []).join(', ')}
+                placeholder="tests"
+                onChange={(e) => {
+                  const parsed = parseValues(e.target.value)
+                  onChange({ protect: parsed.length ? parsed : undefined })
+                }}
+              />
+            </label>
+          </>
+        )}
         <label className="switch">
           <input
             type="checkbox"
@@ -596,6 +634,19 @@ function StepOptions({
                 onChange={(e) => setRepeat({ max: Number(e.target.value) })}
               />
             </label>
+            {task && (
+              <label>
+                {t('editor.stop')}
+                <input
+                  value={(repeat.stop ?? []).join(', ')}
+                  placeholder="test_errati"
+                  onChange={(e) => {
+                    const parsed = parseValues(e.target.value)
+                    setRepeat({ stop: parsed.length ? parsed : undefined })
+                  }}
+                />
+              </label>
+            )}
             <select
               aria-label={t('editor.onMaxFail')}
               value={repeat.onMax ?? 'fail'}
@@ -634,6 +685,41 @@ function WorkflowFields({
         {t('editor.inputLabel')}
         <input value={spec.input} onChange={(e) => onChange({ ...spec, input: e.target.value })} />
       </label>
+      <label className="switch">
+        <input
+          type="checkbox"
+          checked={Boolean(spec.task)}
+          onChange={(e) =>
+            onChange(
+              e.target.checked
+                ? { ...spec, task: true, result: spec.result ?? stepId(spec.steps.at(-1)!, spec.steps.length - 1) }
+                : {
+                    ...spec,
+                    task: undefined,
+                    result: undefined,
+                    steps: spec.steps.map((s) => ({
+                      ...s,
+                      run: undefined,
+                      expect: undefined,
+                      protect: undefined,
+                      repeat: s.repeat ? { ...s.repeat, stop: undefined } : undefined,
+                    })),
+                  },
+            )
+          }
+        />
+        {t('editor.taskModel')}
+      </label>
+      {spec.task && (
+        <label>
+          {t('editor.result')}
+          <input
+            value={spec.result ?? ''}
+            placeholder="verify"
+            onChange={(e) => onChange({ ...spec, result: e.target.value.trim() || undefined })}
+          />
+        </label>
+      )}
       <fieldset className="checklist">
         <legend>{t('editor.stepsTitle')}</legend>
         <p className="hint">
@@ -658,19 +744,28 @@ function WorkflowFields({
                     setRenaming(null)
                   }}
                 />
-                <select
-                  aria-label={t('chat.agentLabel')}
-                  required
-                  value={step.agent}
-                  onChange={(e) => setStep(i, { agent: e.target.value })}
-                >
-                  <option value="">{t('editor.chooseAgent')}</option>
-                  {library.agents.map((a) => (
-                    <option key={a.key} value={a.key}>
-                      {a.key}
-                    </option>
-                  ))}
-                </select>
+                {spec.task ? (
+                  <input
+                    aria-label={t('chat.agentLabel')}
+                    value={step.agent ?? ''}
+                    placeholder="role:implementer"
+                    onChange={(e) => setStep(i, { agent: e.target.value || undefined })}
+                  />
+                ) : (
+                  <select
+                    aria-label={t('chat.agentLabel')}
+                    required
+                    value={step.agent}
+                    onChange={(e) => setStep(i, { agent: e.target.value })}
+                  >
+                    <option value="">{t('editor.chooseAgent')}</option>
+                    {library.agents.map((a) => (
+                      <option key={a.key} value={a.key}>
+                        {a.key}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <button
                   type="button"
                   className="link danger"
@@ -683,11 +778,17 @@ function WorkflowFields({
               <textarea
                 aria-label={t('editor.prompt')}
                 rows={4}
-                required
-                value={step.prompt}
-                onChange={(e) => setStep(i, { prompt: e.target.value })}
+                required={!spec.task}
+                value={step.prompt ?? ''}
+                onChange={(e) => setStep(i, { prompt: e.target.value || undefined })}
               />
-              <StepOptions step={step} index={i} steps={spec.steps} onChange={(change) => setStep(i, change)} />
+              <StepOptions
+                step={step}
+                index={i}
+                steps={spec.steps}
+                task={spec.task}
+                onChange={(change) => setStep(i, change)}
+              />
             </li>
           ))}
         </ol>

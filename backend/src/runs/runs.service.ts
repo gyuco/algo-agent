@@ -49,23 +49,26 @@ export class RunsService {
   async find(userId: number, id: number) {
     const run = await this.prisma.run.findFirst({
       where: { id, userId },
-      include: { project: { select: { name: true } } },
+      include: { project: { select: { name: true } }, mission: { select: { title: true } } },
     });
     if (!run) throw new NotFoundException('Esecuzione non trovata');
     return run;
   }
 
-  view(run: Run & { project?: { name: string } }) {
+  view(run: Run & { project?: { name: string }; mission?: { title: string } | null }) {
     const {
       stepsJson,
       project,
+      mission,
       userId: _userId,
       workflowHash: _hash,
       heartbeatAt: _heartbeat,
+      title,
       ...rest
     } = run;
     return {
       ...rest,
+      title: mission?.title ?? title,
       projectName: project?.name ?? null,
       status: run.status as RunStatus,
       steps: listSteps(readSteps(stepsJson)),
@@ -92,7 +95,7 @@ export class RunsService {
           { finishedAt: { gte: new Date(Date.now() - RECENT_MS) } },
         ],
       },
-      include: { project: { select: { name: true } } },
+      include: { project: { select: { name: true } }, mission: { select: { title: true } } },
       orderBy: { id: 'desc' },
       take: 100,
     });
@@ -165,7 +168,7 @@ export class RunsService {
       }
       const run = await this.prisma.run.findFirst({
         where: { id: notice.runId, userId },
-        include: { project: { select: { name: true } } },
+        include: { project: { select: { name: true } }, mission: { select: { title: true } } },
       });
       if (run) yield { type: 'run', run: this.view(run) };
     }

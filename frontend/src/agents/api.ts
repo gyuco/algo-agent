@@ -35,6 +35,8 @@ export interface McpResource extends Resource {
 export interface WorkflowResource extends Resource {
   input: string
   agents: string[]
+  /** A task model: used by missions, not startable from the Workflows tab. */
+  task?: boolean
 }
 
 export interface ProjectResources {

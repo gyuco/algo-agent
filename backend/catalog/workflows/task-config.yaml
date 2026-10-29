@@ -1,0 +1,20 @@
+description: CI, configurazione, script di build e dipendenze, con tutti i controlli e la review.
+enabledByDefault: true
+input: Task
+task: true
+result: verify
+steps:
+  - id: change
+    agent: role:implementer
+    prompt: |
+      Make the configuration change this task asks for.
+      {{task}}
+      Last verification: {{steps.verify}}
+    repeat: { with: verify, until: ok, max: 3, onMax: fail }
+  - id: verify
+    run: [build, lint, test]
+    agent: role:reviewer
+    verdict: [ok, problemi]
+    prompt: |
+      Check the change against the acceptance criteria and run the full set of checks.
+      {{task}}

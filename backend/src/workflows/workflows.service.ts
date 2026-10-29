@@ -135,6 +135,11 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
         `Il workflow ${key} non è disponibile in questo progetto`,
       );
     }
+    if (workflow.task) {
+      throw new BadRequestException(
+        'È un modello di task: si usa solo nelle missioni',
+      );
+    }
     let writes = false;
     let provider: string | null = null;
     for (const step of workflow.steps) {

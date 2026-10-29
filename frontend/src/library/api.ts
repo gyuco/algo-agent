@@ -28,17 +28,26 @@ export interface SkillSpec extends Base {
 
 export interface WorkflowStep {
   id?: string
-  agent: string
-  prompt: string
+  /** A catalog agent, or `role:<role>` in a task model. Absent in a run-only step. */
+  agent?: string
+  prompt?: string
   needs?: string[]
   approval?: boolean
   verdict?: string[]
+  /** Commands of the plan to run; task models only. */
+  run?: string[]
+  expect?: 'pass' | 'fail'
+  protect?: string[]
   /** Runs the step, then the check `with`, until the check says `until`, at most `max` times. */
-  repeat?: { with: string; until: string; max: number; onMax?: 'fail' | 'continue' }
+  repeat?: { with: string; until: string; max: number; onMax?: 'fail' | 'continue'; stop?: string[] }
 }
 
 export interface WorkflowSpec extends Base {
   input: string
+  /** A task model: used by missions, not startable from the Workflows tab. */
+  task?: boolean
+  /** The step whose verdict closes a task; task models only. */
+  result?: string
   /** Without `id` a step is `step-<n>`; without `needs` it follows the step before. */
   steps: WorkflowStep[]
 }

@@ -123,7 +123,10 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
       library.workflows.filter(mine('workflow')).map((w) => ({
         key: w.key,
         description: w.description,
-        details: [w.steps.map((s) => s.agent).join(' → ')],
+        details: [
+          ...(w.task ? [t('missions.taskModel')] : []),
+          w.steps.map((s) => s.agent).filter(Boolean).join(' → '),
+        ],
       })),
     ],
     [

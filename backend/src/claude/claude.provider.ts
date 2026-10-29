@@ -298,8 +298,16 @@ export class ClaudeProvider implements AgentProvider, OnModuleDestroy {
           ctx.cwd,
           pluginDir,
           ctx.subagents,
+          ctx.appTools,
+          ctx.toolContext,
         ),
-        ...confine(ctx.cwd, ctx.policy, this.logger, ctx.subagents),
+        ...confine(
+          ctx.cwd,
+          ctx.policy,
+          this.logger,
+          ctx.subagents,
+          ctx.turnClosed,
+        ),
         permissionMode: 'default',
         // Don't load the workspace's own settings: they could add hooks or permissions.
         settingSources: [],

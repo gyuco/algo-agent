@@ -102,15 +102,16 @@ Fissate con l'utente prima di scrivere questo documento:
 | `mode` | String | `step` o `auto`. |
 | `input` | String | La richiesta iniziale. |
 | `planJson` | String? | Ultimo piano proposto o approvato (§5). |
-| `planVersion` | Int | 0 finché non c'è un piano. |
-| `approvedVersion` | Int? | Versione approvata in esecuzione. |
+| `planVersion` | Int | 0 finché non c'è un piano; aumenta solo se il piano canonico cambia. |
+| `approvedVersion` | Int? | Ultima versione approvata. |
 | `orchestratorModel` | String | `claude:opus` o `claude:sonnet`. |
-| `sessionId` | String? | Sessione Claude dell'orchestratore, ripresa a ogni punto di decisione. |
-| `baseBranch` | String | Destinazione della PR; di default `develop` se esiste, altrimenti il branch di default del remote. |
-| `branch` | String? | `mission/<id>-<slug>`, creato all'approvazione. |
+| `sessionId` | String? | Sessione Claude dell'orchestratore. Si riprende nel briefing e dentro una milestone; a ogni milestone nuova ne parte una nuova (§8.3). |
+| `fromSession` | String? | Conversazione di chat da cui è nata (`<provider>:<id>`), per il collegamento in chat (§13.2). |
+| `baseBranch` | String? | Destinazione della PR; si legge `develop` se esiste, altrimenti il branch di default del remote, altrimenti quello corrente. Null per un progetto senza git: la missione non può partire. |
+| `branch` | String? | `mission/<id>-<slug>`, creato nella preparazione dopo l'approvazione (fase 2). |
 | `worktreePath` | String? | Worktree del branch della missione, dove l'integratore unisce i task. |
 | `prUrl` | String? | |
-| `waitJson` | String? | Perché la missione aspetta: `{ code, taskId?, until?, detail }` (§7.2). |
+| `waitJson` | String? | Perché la missione aspetta: `{ code, taskId?, entryId?, until?, detail }` (§7.2). |
 | `budgetJson` | String | Soglie e consumo (§9). |
 | `costUsd` | Float | Somma dei costi di orchestratore e task. |
 | `createdAt`, `approvedAt`, `finishedAt`, `seenAt` | DateTime? | `seenAt` come per i run: serve per i non letti. |
@@ -139,8 +140,9 @@ Registro della missione, in sola aggiunta.
 
 | Campo | Tipo | Note |
 |---|---|---|
-| `missionId`, `taskId?` | Int | |
-| `kind` | String | `status` (cambio di stato della missione o di un task), `decision`, `wait`, `resume`, `note`, `plan`, `budget`, `pr`, `error`. |
+| `id` | Int | Cursore degli eventi della missione (§12). |
+| `missionId`, `taskId?` | Int | `taskId` è il task a cui si riferisce l'entry. |
+| `kind` | String | `status` (cambio di stato della missione o di un task), `turn` (`{ runId }`: il client si aggancia agli eventi del run), `question` (`{ question, options }`), `decision`, `wait`, `resume`, `note`, `plan` (una versione del piano), `budget`, `pr`, `error`. |
 | `notify` | Boolean | Se genera una notifica (§11). |
 | `dataJson` | String | Ad esempio, per una decisione: `{ question, options, chosen, reason }`. |
 | `createdAt` | DateTime | |
@@ -150,10 +152,12 @@ Registro della missione, in sola aggiunta.
 - Nuovi valori di `kind`:
   - `mission-task`: il grafo di un task (§6);
   - `mission-orchestrator`: un turno dell'orchestratore.
-- Nuovi campi `missionId` e `missionTaskId`, facoltativi, con indice.
+- Nuovi campi `missionId` e `missionTaskId`, facoltativi, con indice. `missionId` è `Cascade`
+  verso `Mission`; `missionTaskId` è `SetNull` verso `MissionTask`.
 
-Il briefing usa run di tipo `mission-orchestrator` con la stessa logica della chat (allegati,
-`sessionId`). Così riaggancio, stop e sezione Attività funzionano senza codice nuovo.
+Il briefing usa run di tipo `mission-orchestrator`, con un handler dedicato che riusa
+`AgentRunnerService`: allegati, `sessionId`, riaggancio, stop e sezione Attività funzionano
+come in chat. Le sessioni dell'orchestratore non compaiono tra le chat.
 
 ## 5. Il piano
 
@@ -168,6 +172,7 @@ scope:
   dependencies: [passport-google-oauth20]   # dipendenze che i task possono aggiungere
   migrations: true                          # i task possono creare migrazioni Prisma
   paths: [backend/src/auth, frontend/src/auth, backend/prisma]
+  tests: ['**/*.spec.ts', '**/*.test.ts', '**/__fixtures__/**']   # file di test (§6.2, protect)
 checks:
   setup: npm ci                 # eseguito una volta per worktree
   build: npm run build
@@ -177,9 +182,9 @@ checks:
   workdir: backend              # facoltativo; ogni comando può avere il suo
 team:
   orchestrator: claude:opus
-  roles:
-    tester: { agent: tester, model: claude:sonnet }
-    implementer: { agent: implementer, model: claude:sonnet }
+  roles:                        # maxTurns facoltativo, default 80, al massimo 100
+    tester: { agent: tester, model: claude:sonnet, maxTurns: 40 }
+    implementer: { agent: implementer, model: claude:sonnet, maxTurns: 80 }
     reviewer: { agent: reviewer, model: opencode:openai/gpt-5 }
     integrator: { agent: integrator, model: claude:sonnet }
   custom:
@@ -222,11 +227,15 @@ Regole di validazione:
 - il modello di ogni agente deve essere disponibile tra i provider connessi;
 - in ogni task, l'agente che giudica `result` è diverso da quelli che scrivono, anche dopo le
   sostituzioni di `agents`;
-- `checks.test` è obbligatorio.
+- `checks.test` è obbligatorio;
+- se il progetto usa git, `baseBranch` esiste in locale o su `origin`.
 
 **I comandi sono nel piano, non negli agenti.** Oggi gli agenti non hanno shell, ed è una scelta
 di sicurezza (`policy.ts`: un comando non si può confinare in una cartella). Restano senza
-shell. I comandi del piano li approva l'utente e li esegue il backend (§8.2). Per un progetto
+shell. I comandi del piano li approva l'utente e li esegue il backend (§8.2). Attenzione: i
+comandi sono fissi, ma eseguono codice scritto dagli agenti (test, script di `package.json`,
+dipendenze). Per questo girano in un sandbox (§8.2): senza, approvare `npm test` equivale a dare
+una shell agli agenti. Per un progetto
 nuovo, i comandi della prima milestone (scaffolding) si confermano nella revisione di fine
 milestone (§7.3).
 
@@ -261,18 +270,20 @@ steps:
     expect: fail          # i test nuovi devono fallire; se passano è un avviso, non un errore
   - id: implement
     agent: role:implementer
-    protect: [tests]      # non può modificare i file scritti dal passo tests
+    protect: [tests]      # non può modificare i file del passo tests né quelli in scope.tests
     prompt: |
       Make these tests pass: {{steps.tests}}
       {{task}}
       Last verification: {{steps.verify}}
-    repeat: { with: verify, until: ok, max: 3, onMax: fail }
+      If a test is wrong, don't work around it: explain why in your answer.
+    repeat: { with: verify, until: ok, max: 3, onMax: fail, stop: [test_errati] }
   - id: verify
     run: [build, lint, test]
     agent: role:reviewer
-    verdict: [ok, problemi]
+    verdict: [ok, problemi, test_errati]
     prompt: |
       Check the diff against the acceptance criteria.
+      Answer "test_errati" only if the implementer says a test is wrong and you agree.
       {{task}}
 result: verify
 ```
@@ -290,13 +301,18 @@ Un workflow con `task: true` è un modello di task. Rispetto a un workflow norma
   quindi con team diversi.
 - **Passi di sistema.**
   - `run: [build, lint, test]` esegue i comandi del piano con `ChecksService` (§8.2).
+  - `agent` è facoltativo quando c'è `run`: il passo esegue solo i comandi, senza agente.
   - `expect: pass` (default) dà `problemi` al primo comando che fallisce; `expect: fail` è
     per i test rossi.
   - Un passo con `run` e `agent` è una **verifica composta**: prima i comandi, poi, solo se
     passano, l'agente. Nel report i due esiti si vedono separati.
-- **`protect`.** Elenca i passi i cui file questo passo non può modificare. Il controllo è sul
-  diff, prima della verifica: se viene violato, il verdetto è `problemi` senza chiamare
-  l'agente.
+- **`protect`.** Elenca i passi i cui file questo passo non può modificare; `tests` include
+  anche i file che corrispondono a `scope.tests`, così fixture e helper esistenti sono protetti.
+  Il controllo è sul diff, prima della verifica: se viene violato, il verdetto è `problemi`
+  senza chiamare l'agente. Il passo `tests` non è limitato a `scope.tests`: che il tester non
+  tocchi il codice dell'applicazione lo controlla il reviewer.
+- **`repeat.stop`.** Verdetti della verifica che chiudono il `repeat` senza altri tentativi: il
+  run finisce con quel verdetto e il task è `blocked` con il motivo (§6.3).
 - **`result`.** Indica il passo il cui verdetto chiude il task: `ok` vuol dire task
   verificato.
 
@@ -310,12 +326,13 @@ Regole di validazione, in aggiunta a quelle del §5 di
 4. L'agente di `result` ha un ruolo diverso da quello di ogni passo in scrittura: chi scrive
    non si giudica da solo.
 5. `repeat` al massimo 3: è il limite di tentativi della decisione 7.
+6. I verdetti di `repeat.stop` sono tra quelli di `result` e diversi da `ok`.
 
 Queste regole garantiscono la decisione 7 per qualsiasi modello: un task chiuso è sempre
 verificato dai comandi e da un altro agente. Un workflow del catalogo senza `task: true` non
 può essere usato come modello. Si può copiare e adattare, e la validazione dice cosa manca.
 
-Le estensioni dell'executor (`run`, verifica composta, `protect`, ruoli) valgono solo nei
+Le estensioni dell'executor (`run`, verifica composta, `protect`, `repeat.stop`, ruoli) valgono solo nei
 modelli di task. `run` e `protect` potranno passare ai workflow normali in un secondo momento,
 dopo aver deciso da dove prendono i comandi: oggi un workflow non ha un piano.
 
@@ -328,26 +345,28 @@ dopo aver deciso da dove prendono i comandi: oggi un workflow non ha un piano.
 - **Tentativi esauriti** (`onMax: fail`): il task è `blocked`. Le task che non dipendono da lui
   vanno avanti.
 - **Implementatore in disaccordo con i test** (ad esempio un test sbagliato): lo dice nella sua
-  risposta. Se il reviewer gli dà ragione, il task finisce bloccato con il motivo, pronto per
-  l'utente o per l'orchestratore.
+  risposta. Se il reviewer gli dà ragione, il verdetto è `test_errati`: per `repeat.stop` il run
+  finisce subito e il task è `blocked` con il motivo, pronto per l'utente o per
+  l'orchestratore.
 
 ## 7. Ciclo di vita
 
 ### 7.1 Stati della missione
 
 ```
-briefing ──(propose_plan)──▶ planned ──(approva)──▶ running ──▶ integrating ──▶ done (PR aperta)
-   ▲                            │                      │  ▲
-   └────(commenti al piano)─────┘                      ▼  │
-                                                   waiting ┘   paused (5 ore)  ──(reset)──▶ running
-                                                      │
-                                                      └──▶ aborted / failed
+briefing ⇄ planned ──(approva)──▶ approved ──(fase 2)──▶ running ──▶ integrating ──▶ done
+   ▲                                  │                    │  ▲
+   └──────(Rivedi il piano)───────────┘                    ▼  │
+                                                       waiting ┘
+                                                paused (5 ore) ──(reset)──▶ running
+   ogni stato ──(Ferma)──▶ aborted · errore non recuperabile ──▶ failed
 ```
 
 | Stato | Significato |
 |---|---|
 | `briefing` | Intervista in corso: l'utente e l'orchestratore si scambiano messaggi. |
 | `planned` | C'è un piano proposto che aspetta l'approvazione. Un commento riporta la missione in `briefing`. |
+| `approved` | Piano approvato. In fase 1 è lo stato finale; dalla fase 2 prepara branch, worktree e controllo di base, poi passa a `running`. |
 | `running` | Task in corso o pronti. |
 | `waiting` | Serve l'utente; il motivo è in `waitJson` (§7.2). I task già in corso finiscono. |
 | `paused` | Finestra delle 5 ore sotto soglia; riparte da sola dopo `until` (§9). |
@@ -359,22 +378,29 @@ briefing ──(propose_plan)──▶ planned ──(approva)──▶ running 
 
 | `code` | Quando | Azioni dell'utente |
 |---|---|---|
+| `question` | Nel briefing, una domanda di `ask_user` aspetta la risposta. | Rispondi (testo o opzione) · Ferma |
+| `baseline` | Nella preparazione dopo l'approvazione, `setup` o i controlli falliscono già sul branch della missione (§8.4). | Riprova (dopo aver sistemato il branch base) · Rivedi il piano (comandi) · Ferma |
 | `task_review` | Passo-passo: un task ha superato la verifica. | Ok · Rifai con nota · Rivedi il piano · Passa ad automatico |
 | `task_blocked` | Un task ha esaurito i tentativi. | Rifai con nota · Salta il task · Rivedi il piano |
 | `scope` | Il diff di un task esce dal perimetro (§7.4). | Accetta (il perimetro si allarga e la decisione si registra) · Rifai con nota · Rivedi il piano |
 | `weekly_budget` | La missione ha consumato la sua quota settimanale (§9). | Continua (concede un'altra quota) · Passa a passo-passo · Ferma |
 | `milestone` | Solo se la revisione di fine milestone propone cambi che richiedono l'utente (§7.3). | Approva il piano rivisto · Commenta |
 
+- **Domanda del briefing**: `ask_user` scrive un'entry `question` e `waitJson = { code: 'question', entryId }`. La risposta è il messaggio successivo: crea un nuovo run e azzera `waitJson`.
 - **Passo-passo**: i task girano uno alla volta. Quando uno si chiude, non ne parte un altro
-  finché l'utente non risponde. Fino all'Ok il task resta sul suo branch e non viene unito,
-  così "Rifai con nota" riparte dallo stesso branch senza annullare niente.
-- **Automatica**: fino a `parallelTasks` task in parallelo. Un `task_blocked` o uno `scope`
+  finché l'utente non risponde. Fino all'Ok il task resta sul suo branch e non viene unito.
+- **Automatica**: fino a `parallelTasks` task in parallelo. Un task parte quando i task in
+  `needs` sono **uniti** nel branch della missione, non solo `done`: parte dalla punta della
+  missione e deve contenerne il lavoro. Un `task_blocked` o uno `scope`
   ferma solo i task che dipendono da quello, gli altri continuano. La missione è `waiting`
   solo quando non resta niente da eseguire senza l'utente.
 - **Passa ad automatico / a passo-passo**: cambia `mode`. Il passaggio a passo-passo vale dal
   prossimo task che si chiude; i task già in corso finiscono.
 - **Rifai con nota**: aggiunge la nota a `notesJson` e crea un nuovo run del task. Ripartono
-  da capo tutti i passi, tester compreso, perché la nota può cambiare i test.
+  da capo tutti i passi, tester compreso, perché la nota può cambiare i test. Il branch del task
+  torna alla punta attuale della missione (`git reset --hard`) e il diff del tentativo
+  precedente entra in `{{task}}` come contesto. Così `red` torna significativo e `protect` vale
+  per i test del nuovo tentativo, non solo per quelli toccati di nuovo.
 
 ### 7.3 Fine milestone
 
@@ -391,8 +417,9 @@ con i report dei task e l'esito dei controlli sul branch della missione. Può fa
 
 ### 7.4 Perimetro
 
-Prima di unire un task, il backend confronta il diff con `scope`. Il controllo è
-deterministico, senza agenti:
+Il backend confronta il diff del task con `scope` prima di unirlo, e anche prima di ogni
+esecuzione di `setup` e dei controlli, compreso `run_checks`: una dipendenza fuori perimetro non
+deve essere installata né eseguita. Il controllo è deterministico, senza agenti:
 
 - dipendenze aggiunte in `package.json` (o nei file equivalenti) che non sono in
   `scope.dependencies`;
@@ -400,7 +427,8 @@ deterministico, senza agenti:
 - file cancellati, o file fuori da `scope.paths` se l'elenco è definito.
 
 Se il controllo fallisce, l'attesa è `scope` sia in passo-passo sia in automatico. È il "cambio
-fuori perimetro" della decisione 8.
+fuori perimetro" della decisione 8. Durante un passo, `run_checks` rifiuta l'esecuzione e
+restituisce all'agente il motivo, così può correggere prima della verifica.
 
 ## 8. Backend
 
@@ -410,10 +438,10 @@ fuori perimetro" della decisione 8.
 |---|---|
 | `MissionsModule` | Raggruppa i servizi qui sotto. |
 | `MissionsService` | Creazione, briefing, approvazione, azioni dell'utente, cambi di stato. Ogni cambio è un update condizionato sullo stato atteso, come per i run. |
-| `MissionScheduler` | A ogni evento rilevante (task finito, approvazione, ripresa, timer di sicurezza) decide quali task far partire: dipendenze soddisfatte, modalità, `parallelTasks`, budget. Crea i run `mission-task`. |
+| `MissionScheduler` | A ogni evento rilevante (task finito o unito, approvazione, ripresa, timer di sicurezza) decide quali task far partire: dipendenze unite, modalità, `parallelTasks`, budget. Crea i run `mission-task`. |
 | `TaskGraphFactory` | Dal modello di task, dal task e dal team costruisce il grafo del run (§6): risolve i ruoli e compila `{{task}}`. |
 | `GitService` | Branch, worktree, commit, merge, push. Usa `git` con argomenti in array, mai una stringa di shell. |
-| `ChecksService` | Esegue i comandi del piano in un worktree (§8.2). |
+| `ChecksService` | Esegue i comandi del piano in un worktree, dentro il sandbox (§8.2). |
 | `BudgetGuard` | Legge l'uso del piano e decide pause e attese (§9). |
 | `ForgeService` | Crea repository e PR su GitHub o GitLab (§10). |
 | `MissionTools` | I tool dell'orchestratore e quelli dei task, serviti dal server MCP `app` (§8.3). |
@@ -423,10 +451,21 @@ fuori perimetro" della decisione 8.
 - I comandi vengono solo dal piano approvato: non li sceglie un agente durante l'esecuzione.
   Partono con `spawn` (`shell: false`), con il comando diviso in argomenti, `cwd` dentro il
   worktree e un timeout (`MISSION_CHECK_TIMEOUT_MS`, default 10 minuti).
-- L'ambiente è minimo: `PATH`, `HOME` e `CI=1`. Le variabili del backend e i segreti non
-  passano, a meno che il piano non nomini segreti del vault da esporre.
+- **Sandbox.** I comandi eseguono codice scritto dagli agenti (test, script di `package.json`,
+  dipendenze nuove), quindi ogni comando gira isolato:
+  - scrittura solo nel worktree e in una cartella temporanea per comando; lettura negata su
+    `~/.ssh`, `~/.claude`, `~/.config`, `DATA_DIR` e gli altri progetti;
+  - `HOME` finta (la cartella temporanea), non quella dell'utente;
+  - rete chiusa, tranne per `checks.setup`, che ha accesso solo al registry dei pacchetti;
+  - su macOS con `sandbox-exec` e un profilo generato per il worktree, su Linux con un
+    container o `bwrap`. Se il sandbox non è disponibile, le missioni non partono: nessun
+    fallback senza isolamento.
+- L'ambiente è minimo: `PATH`, la `HOME` finta e `CI=1`. Le variabili del backend e i segreti
+  non passano, a meno che il piano non nomini segreti del vault da esporre.
 - L'output viene tagliato agli ultimi N KB per comando, che sono la parte utile nei fallimenti.
-- `checks.setup` gira una volta per worktree, prima del primo controllo.
+- `checks.setup` gira una volta per worktree, prima del primo controllo, dopo il controllo del
+  perimetro (§7.4). Per npm il backend aggiunge `--ignore-scripts` quando `scope.dependencies`
+  non è vuoto: gli script di installazione delle dipendenze nuove non partono.
 - `checks.parallel: false` attiva un lock per progetto: i controlli di due task dello stesso
   progetto, anche di missioni diverse, non girano insieme. Serve quando i test usano porte fisse
   o un database di sviluppo condiviso.
@@ -446,20 +485,41 @@ fuori perimetro" della decisione 8.
 | `task_report` | Orchestratore | Legge il report di un task. |
 | `run_checks` | Agenti dei task | §8.2. |
 
+I tool di chiusura (`ask_user`, `propose_plan` valido) scrivono in una transazione condizionata
+sullo stato atteso e segnano il turno come chiuso. Il run finisce in modo naturale con esito
+`done` — nell'executor `waiting` significa "riesegui lo stesso run", mentre qui la risposta è
+un run nuovo — e l'hook `PreToolUse` / `canUseTool` nega ogni altro tool con "Il turno è
+chiuso". Così una seconda `ask_user`, o `ask_user` e `propose_plan` nello stesso turno, non
+sono possibili: vince la prima. Se `propose_plan` non è valido il turno resta aperto e gli
+errori tornano all'orchestratore, che corregge. Un turno può anche finire senza tool di
+chiusura: la missione resta in `briefing`, senza domanda in sospeso. Il testo che il modello
+scrive dopo il tool si mostra: è innocuo.
+
 L'orchestratore legge i file del progetto (`files: read`) ma non scrive. Nel briefing lavora
 sulla cartella del progetto, durante l'esecuzione sul worktree della missione.
 
+La sessione dell'orchestratore non dura tutta la missione, perché il contesto e il costo
+crescerebbero a ogni chiamata. Il briefing e "Rivedi il piano" riprendono la stessa sessione.
+A ogni milestone nuova parte una sessione nuova, con un riepilogo costruito dal backend: piano
+approvato, decisioni registrate, report dei task chiusi e stato dei controlli.
+
 ### 8.4 Git
 
-- **Approvazione**:
+- **Approvazione e preparazione** (dalla fase 2):
   - `git fetch`;
   - branch `mission/<id>-<slug>` da `origin/<baseBranch>`;
-  - worktree della missione in `DATA_DIR/worktrees/<projectId>/<missionId>/main`.
+  - worktree della missione in `DATA_DIR/worktrees/<projectId>/<missionId>/main`;
+  - **controllo di base**: `checks.setup` e tutti i controlli sul worktree della missione. Se
+    falliscono, la missione va in `waiting` con il motivo `baseline` (§7.2): con i test già
+    rossi ogni verifica fallirebbe e tutti i task finirebbero bloccati;
+  - al termine la missione passa da `approved` a `running`.
 - **Partenza di un task**: branch `mission/<id>/<key>` dalla punta attuale del branch della
   missione e worktree in `.../<missionId>/<key>`. Il `cwd` degli agenti è il worktree: la
   confinazione di `pathViolation` resta la stessa.
 - **Chiusura di un task**: commit con messaggio dal titolo del task e trailer
-  `Mission: <id>`, `Task: <key>`.
+  `Mission: <id>`, `Task: <key>`. Ogni comando git del backend gira con
+  `-c core.hooksPath=/dev/null`: gli hook del repository (husky e simili) eseguirebbero codice
+  del worktree fuori dal sandbox.
 - **Unione**: `git merge --no-ff` nel worktree della missione.
   - In caso di conflitto, il backend lascia i file in conflitto e chiama l'**integratore** con i
     due diff e i criteri dei task coinvolti. Poi rifà i controlli completi.
@@ -472,13 +532,18 @@ sulla cartella del progetto, durante l'esecuzione sul worktree della missione.
   con il push.
 - I worktree sono fuori dalla cartella del progetto, quindi l'IDE e `git status` dell'utente non
   li vedono. `git worktree list` sì.
+- I worktree, e la cartella temporanea del briefing di un progetto nuovo (§10.3), possono essere
+  fuori da `WORKSPACE_ROOT`. Il `cwd` degli agenti non passa da `resolveWorkspace`, che lo
+  rifiuterebbe: lo crea il backend, e la confinazione resta quella di `pathViolation`.
 
 ### 8.5 Concorrenza con gli altri run
 
 I run `mission-task` hanno un limite loro (`MISSIONS_MAX_RUNNING_TASKS`, default 6). Non contano
 per `RUNS_MAX_WORKFLOWS_PER_USER` né per `RUNS_MAX_WRITERS_PER_PROJECT`: scrivono nei worktree,
-non nella cartella del progetto. Restano soggetti a `RUNS_MAX_CONCURRENT`, che conviene alzare
-quando si usano le missioni. Il numero di missioni non ha limiti (decisione 12).
+non nella cartella del progetto. I run `mission-orchestrator` non hanno un limite per utente: un
+solo turno per missione, garantito dallo stato. Tutti restano soggetti a `RUNS_MAX_CONCURRENT`,
+che conviene alzare quando si usano le missioni. Il numero di missioni non ha limiti
+(decisione 12).
 
 ## 9. Budget
 
@@ -501,11 +566,15 @@ finestra: `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`.
 - Prima di far partire un task **e prima di ogni passo** di un task, lo scheduler controlla che
   resti più di `fiveHourMinRemaining` (10%). La finestra è dell'account, quindi la soglia vale
   per tutte le missioni insieme.
+- Un passo lungo (un implementatore con 80 turni) può consumare più del margine. Per questo
+  ogni `rate_limit_event` ricevuto durante una sessione di missione viene confrontato con la
+  soglia: sotto metà soglia (5%) la sessione si interrompe, e il passo ripartirà da capo dopo
+  il reset.
 - Sotto soglia, non partono né task né passi nuovi. Le sessioni in corso finiscono. I run dei
   task si fermano in `waiting` con il motivo `budget`, come per un'approvazione. Le missioni
   vanno in `paused` con `until = resetsAt`, ricevi una notifica e viene scritta una riga nel
   registro.
-- Dopo `until` lo scheduler riprende il dato. Se la finestra è sotto soglia, le missioni
+- Dopo `until` lo scheduler riprende il dato. Se resta più della soglia, le missioni
   tornano `running` e i run ripartono dal passo successivo. Non serve nessuna azione.
 - Anche il briefing e l'orchestratore rispettano la soglia: un turno dell'orchestratore aspetta
   il reset come un task.
@@ -517,15 +586,28 @@ attribuire a ogni missione la sua parte:
 
 1. a ogni aggiornamento del dato, `BudgetGuard` calcola quanto è cresciuta la finestra
    settimanale dall'aggiornamento precedente;
-2. divide la crescita tra le sessioni Claude finite nell'intervallo, in proporzione al loro
-   `costUsd`, che l'SDK riporta anche con l'abbonamento;
+2. divide la crescita tra le sessioni Claude attive nell'intervallo, in proporzione al
+   **delta** del loro `costUsd` nell'intervallo (l'SDK lo riporta anche con l'abbonamento). Una
+   sessione lunga contribuisce così a ogni intervallo che attraversa, non solo a quello in cui
+   finisce;
 3. la parte delle sessioni di una missione si somma in `budgetJson.weeklyUsed`. Il resto
    (chat, workflow, uso di Claude Code fuori da algo-agent) non conta per nessuna missione.
+
+La finestra usata è `seven_day`. Le finestre per modello (`seven_day_opus`,
+`seven_day_sonnet`) valgono solo come limite rigido: se una è esaurita, i passi con quel modello
+aspettano il reset come per le 5 ore (§9.2).
 
 Quando `weeklyUsed` raggiunge `weeklyMaxShare` (30% della settimana), la missione va in
 `waiting` con il motivo `weekly_budget`. "Continua" concede un'altra quota uguale. Se la finestra
 settimanale si azzera durante la missione, il conteggio continua: la quota è della missione, non
 della settimana.
+
+La quota per missione non protegge l'account: con il numero di missioni illimitato (decisione
+12), quattro missioni al 30% arrivano al 120%. Per questo c'è anche un tetto globale,
+`MISSIONS_WEEKLY_MAX_SHARE` (default 0.6), sulla somma della crescita attribuita a tutte le
+missioni nella settimana corrente. Raggiunto il tetto, nessuna missione avvia task o passi
+nuovi e tutte vanno in `waiting` con il motivo `weekly_budget`. Il tetto si azzera con la
+finestra settimanale.
 
 È una stima, ed è dichiarata come tale nell'interfaccia. Il dato più affidabile, la percentuale
 della finestra, è sempre visibile accanto.
@@ -550,7 +632,11 @@ massime" dei workflow) e le soglie, modificabili prima dell'approvazione.
 - Li usa solo il backend (`ForgeService`, `GitService` per il push via HTTPS con header di
   autorizzazione). Gli agenti non li vedono mai.
 - Il forge si riconosce dall'URL del remote `origin`: `github.com`, l'host di `GITLAB_URL`
-  oppure `gitlab.com`.
+  oppure `gitlab.com`. Un remote SSH (`git@host:ns/repo.git`) si converte nell'URL HTTPS
+  equivalente solo per il push del backend; il remote del progetto non cambia.
+- **Progetto senza `origin`**, o con un forge non riconosciuto: la missione si può approvare, con
+  un avviso nel piano. Alla fine non c'è push né PR: la missione è `done` con il branch locale,
+  e l'utente lo unisce o lo pubblica da sé.
 
 ### 10.2 PR finale
 
@@ -597,6 +683,7 @@ Solo in-app (decisione 10). Le genera il registro: ogni `MissionEntry` con `noti
 |---|---|
 | Piano pronto da approvare | sì |
 | Task chiusa in passo-passo | sì |
+| Controllo di base fallito | sì |
 | Task bloccata, fuori perimetro | sì |
 | Pausa per le 5 ore e ripresa | sì, entrambe |
 | Quota settimanale raggiunta | sì |
@@ -623,20 +710,22 @@ Solo in-app (decisione 10). Le genera il registro: ogni `MissionEntry` con `noti
 |---|---|---|
 | `POST` | `/projects/:projectId/missions` | `{ input, mode, orchestratorModel, attachments, fromSession? }`. Crea la missione in `briefing` e il primo turno. Con `fromSession` la conversazione di chat diventa l'inizio del briefing (§13.2). |
 | `POST` | `/missions/new-project` | Come sopra, più `{ name, forge, namespace, visibility }`. |
-| `GET` | `/missions?status=` | Missioni dell'utente. |
+| `GET` | `/missions?status=&projectId=` | Missioni dell'utente. |
 | `GET` | `/missions/:id` | Missione, piano, task, budget. |
 | `GET` | `/missions/:id/entries` | Registro. |
 | `GET` | `/missions/:id/events?after=` | SSE: cambi di stato della missione e dei task, nuove righe del registro, budget. Il cursore è l'id di `MissionEntry`; i cambi di stato sono a loro volta righe del registro, senza notifica. Il dettaglio dei task si segue sui loro run (`/runs/:id/events`). |
-| `POST` | `/missions/:id/messages` | Risposta nel briefing o in "Rivedi il piano", con allegati. Crea un run `mission-orchestrator`. |
-| `POST` | `/missions/:id/approve` | `{ planVersion }`: 409 se nel frattempo è arrivata una versione nuova. |
+| `POST` | `/missions/:id/messages` | `{ text, attachments }`. Risposta nel briefing o commento al piano: da `planned` la missione torna in `briefing`. Crea un run `mission-orchestrator`; 409 con un turno in corso. |
+| `POST` | `/missions/:id/approve` | `{ planVersion, mode }`: 409 se la versione è superata, la missione non è `planned` o il piano non è più valido (template disattivato, provider scollegato); in quest'ultimo caso la risposta elenca gli errori. Salva `mode`, `approvedVersion` e `approvedAt`. |
+| `POST` | `/missions/:id/revise` | Da `approved`: torna in `briefing` per rivedere il piano. `approvedVersion` resta finché non c'è una nuova approvazione. |
 | `POST` | `/missions/:id/tasks/:key/ok` | |
 | `POST` | `/missions/:id/tasks/:key/redo` | `{ note }` |
 | `POST` | `/missions/:id/tasks/:key/skip` | Solo per i task `blocked`; i task che dipendono da lui partono con l'avviso, come i passi saltati. |
 | `POST` | `/missions/:id/scope/accept` | Allarga il perimetro e registra la decisione. |
-| `POST` | `/missions/:id/continue` | Dopo `weekly_budget`. |
-| `POST` | `/missions/:id/mode` | `{ mode }` |
-| `POST` | `/missions/:id/abort` | Ferma i run in corso; branch e worktree restano. |
-| `DELETE` | `/missions/:id` | Solo missioni finite: cancella worktree e branch locali dei task. |
+| `POST` | `/missions/:id/continue` | Dopo `weekly_budget`. Se è stato raggiunto il tetto globale (§9.3), risponde 409 fino al reset della settimana. |
+| `POST` | `/missions/:id/baseline/retry` | Dopo `baseline`: aggiorna il branch della missione da `origin/<baseBranch>` e rifà il controllo di base. |
+| `POST` | `/missions/:id/mode` | `{ mode }`. Dalla fase 3, per missioni approvate o in corso. |
+| `POST` | `/missions/:id/abort` | Ferma il turno in corso; `aborted`. Branch e worktree restano. |
+| `DELETE` | `/missions/:id` | Nella fase 1 solo `aborted` o `approved`; dalla fase 2 le missioni finite. Cancella worktree e branch locali dei task. |
 
 Ogni azione controlla `waitJson.code` e lo stato, e risponde 409 se la missione non è più nello
 stato atteso: due schede aperte non devono poter approvare due volte.
@@ -670,20 +759,20 @@ te") e da dove ci si rientra.
 
 ### 13.3 Le viste della missione
 
-1. **Briefing**: la chat esistente (`ChatPanel`, con gli allegati), con accanto il piano
-   quando c'è. Le domande di `ask_user` con opzioni si mostrano come pulsanti, più una risposta
-   libera.
-2. **Piano**: milestone e task con criteri e dipendenze, team (agente, modello, permessi),
-   comandi di controllo, perimetro, soglie del budget. Contiene il grafo dei task (il
-   componente SVG di [workflow-a-grafo.md](workflow-a-grafo.md) §8.2, riusato) e i pulsanti
-   Approva, Commenta e scelta della modalità.
+1. **Briefing**: la chat esistente (i componenti di messaggio di `ChatPanel`, con gli allegati),
+   con accanto il piano quando c'è. Le domande di `ask_user` con opzioni si mostrano come
+   pulsanti, più una risposta libera.
+2. **Piano**: milestone e task con criteri e dipendenze, team (agente, modello, permessi,
+   `maxTurns`), comandi di controllo, perimetro, soglie del budget e stima delle sessioni nel
+   caso peggiore. In fase 1 i task sono in **elenco**, con le dipendenze come testo ("dipende
+   da: oauth-strategy"): il componente grafo, unico per l'anteprima dei workflow e per la vista
+   Piano, arriva dopo la fase 3. Pulsanti Approva, Commenta e scelta della modalità.
 3. **Missione in corso**:
    - in alto: modalità, azioni (cambio di modalità, Ferma), barre del budget e costo;
    - sotto: i task in un **elenco raggruppato per milestone**, non in un grafo, perché si legge
      anche con molti task e su schermi stretti. Ogni riga mostra stato, passo corrente,
      tentativo ("2/3") e l'ultima attività ("esegue test…", "tester scrive test…"). I task in
-     attesa di dipendenze dicono quali ("aspetta: export-endpoint"). Il grafo resta nella
-     vista Piano;
+     attesa di dipendenze dicono quali ("aspetta: export-endpoint");
    - il motivo dell'attesa in evidenza, con le azioni del §7.2;
    - il registro (decisioni, milestone chiuse, pause) e il link alla PR.
 4. **Task**: i passi del run, in diretta. Riusa la vista del run del workflow
@@ -710,11 +799,15 @@ meccanismo di `seq`.
 2. **Dipendenze nei worktree**: `checks.setup` con `npm ci` per ogni worktree costa tempo e
    disco. Si potrà valutare una cache condivisa o il riuso di `node_modules` dal worktree della
    missione.
-3. **`maxTurns`**: oggi il default è 20, poco per un implementatore. Il piano dovrà indicarlo
-   per ruolo, con un default più alto per i task (es. 80).
+3. **Sandbox dei controlli** (§8.2): verificare che `sandbox-exec`, deprecato ma ancora
+   presente su macOS, regga i toolchain comuni (npm, Prisma, test con porte locali), e scegliere
+   tra container e `bwrap` su Linux.
 4. **Attribuzione della quota settimanale** (§9.3): da verificare sul campo quanto la stima si
    discosta dal reale con più missioni in parallelo.
-5. **Test end-to-end** nel browser: esclusi per ora (decisione 7); si possono aggiungere come
+5. **Limiti di `protect`**: non impedisce di cambiare la configurazione dei test (ad esempio
+   `jest.config`) o di scrivere codice che riconosce i test. Se ne occupa il reviewer; si potrà
+   aggiungere la configurazione dei test a `scope.tests`.
+6. **Test end-to-end** nel browser: esclusi per ora (decisione 7); si possono aggiungere come
    comando `checks.e2e` senza cambiare il modello.
 
 ## 15. Test
@@ -726,18 +819,27 @@ meccanismo di `seq`.
   - `TaskGraphFactory`: ruoli risolti dal team e dagli `agents` del task, `{{task}}` con note e
     dipendenze;
   - passi di sistema: `red` con test già verdi (avviso), verifica composta che non chiama il
-    reviewer se i controlli falliscono, `protect` violato;
+    reviewer se i controlli falliscono, `protect` violato (anche su file di `scope.tests`),
+    `test_errati` che chiude il `repeat` e blocca il task;
+  - "Rifai con nota": branch del task riportato alla punta della missione, diff precedente in
+    `{{task}}`;
+  - controllo di base fallito all'approvazione (`baseline`);
+  - dipendenze: un task parte solo quando quelli in `needs` sono uniti;
   - i tre modelli inclusi passano la validazione;
   - scheduler: passo-passo un task alla volta, automatica con `parallelTasks`, blocco che ferma
     solo i dipendenti, cambio di modalità a metà;
-  - perimetro: dipendenze, migrazioni, file cancellati e fuori percorso;
+  - perimetro: dipendenze, migrazioni, file cancellati e fuori percorso; controllo prima di
+    `setup` e di `run_checks`;
   - `GitService` su repository temporanei: worktree, commit, merge pulito, conflitto risolto,
-    conflitto non risolto con `merge --abort`;
+    conflitto non risolto con `merge --abort`, hook del repository non eseguiti, remote SSH
+    convertito per il push, progetto senza `origin`;
   - `ChecksService`: niente shell, timeout, output tagliato, lock con `parallel: false`,
-    ambiente senza segreti;
-  - budget: pausa sotto il 10% prima di un passo, ripresa al reset, attribuzione della quota
-    settimanale con più missioni, attesa al 30% e nuova quota con "Continua", assenza di dati
-    con API key;
+    ambiente senza segreti, `HOME` finta, sandbox che nega la lettura di `~/.ssh` e la rete
+    fuori da `setup`, missioni rifiutate senza sandbox;
+  - budget: pausa sotto il 10% prima di un passo, sessione interrotta sotto il 5%, ripresa al
+    reset, attribuzione della quota settimanale con più missioni e sessioni lunghe, attesa al
+    30% e nuova quota con "Continua", tetto globale, assenza di dati con API key;
+  - orchestratore: sessione nuova a ogni milestone, con il riepilogo;
   - azioni dell'utente con lo stato sbagliato (409), approvazione di una versione superata;
   - ripresa dopo un riavvio a metà task, a metà merge e in pausa;
   - `ForgeService` con API finte: repository e PR su GitHub e GitLab, host self-hosted.
@@ -748,18 +850,22 @@ meccanismo di `seq`.
 
 1. **Missione, briefing e piano**: modello dati, `ask_user`, `propose_plan`, validazione,
    scheda Missioni, "Trasforma in missione" dalla chat, viste Briefing e Piano, approvazione.
+   Comprende il contratto dei modelli di task (§6.2) e i tre YAML inclusi, caricati ma non
+   avviabili ed esclusi dalla scheda Workflow; l'executor li esegue dalla fase 3.
    Ancora senza esecuzione: si verifica che i piani
-   prodotti siano buoni prima di costruirci sopra.
-2. **Git e controlli**: `GitService`, `ChecksService`, `run_checks`, worktree della missione e
-   dei task.
+   prodotti siano buoni prima di costruirci sopra. Dettaglio in [fase1.md](fase1.md).
+2. **Git e controlli**: `GitService`, `ChecksService` con il sandbox, `run_checks`, controllo
+   del perimetro prima dei comandi, worktree della missione e dei task, controllo di base
+   nella preparazione dopo l'approvazione. Il sandbox va qui, non dopo: senza, nessun comando
+   degli agenti gira.
 3. **Task e passo-passo**: modelli di task (contratto, `task-tdd`, `task-docs`,
-   `task-config`), passi di sistema, verifica composta e `protect` nell'executor,
+   `task-config`), passi di sistema, verifica composta, `protect` e `repeat.stop` nell'executor,
    `TaskGraphFactory`, `MissionScheduler` con un task alla volta, attese `task_review` e
    `task_blocked`, vista Task, notifiche in-app di base. A questo punto una missione funziona
    dall'inizio alla fine in passo-passo, con il branch e senza PR.
 4. **Budget**: `BudgetGuard`, pausa e ripresa per le 5 ore, quota settimanale, barre nelle
    viste. Va fatto prima della modalità automatica, che senza budget non deve esistere.
-5. **Modalità automatica**: task in parallelo, integratore e conflitti, perimetro, fine
+5. **Modalità automatica**: task in parallelo, integratore e conflitti, attesa `scope`, fine
    milestone con `update_plan` e `record_decision`, cambio di modalità.
 6. **PR**: `ForgeService` per GitHub e GitLab, fase `integrating`, descrizione con le
    decisioni.

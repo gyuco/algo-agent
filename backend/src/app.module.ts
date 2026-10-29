@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { CryptoModule } from './crypto/crypto.module.js';
+import { MissionsModule } from './missions/missions.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { ProvidersModule } from './providers/providers.module.js';
@@ -25,6 +26,7 @@ import { WorkflowsModule } from './workflows/workflows.module.js';
     VaultModule,
     CatalogModule,
     AgentsModule,
+    MissionsModule,
     WorkflowsModule,
   ],
   controllers: [AppController],

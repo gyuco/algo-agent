@@ -54,6 +54,8 @@ export interface SessionSummary {
   title: string;
   updatedAt: string;
   runId: number | null;
+  /** Mission born from this conversation, if any. */
+  missionId: number | null;
   activeRun: {
     runId: number;
     status: RunStatus;
@@ -90,6 +92,8 @@ export interface SessionHistory {
   provider: string;
   /** Finished turns only: a turn in progress is in `lastRun`, to follow. */
   messages: HistoryMessage[];
+  /** Mission born from this conversation, if any. */
+  missionId: number | null;
   /** Model chosen for the latest turn (`<provider>:<model>`); null: the default one. */
   model: string | null;
   /** Effort chosen for the latest turn; null: the model's default. */

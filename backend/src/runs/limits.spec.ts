@@ -58,6 +58,26 @@ describe('blockedBy', () => {
     const others = [1, 2, 3, 4, 5, 6].map((u) => chat(u, u + 10));
     expect(blockedBy(chat(), others, limits)).toEqual({ code: 'instance' });
   });
+
+  it('gives mission runs no per-user limit of their own', () => {
+    const orchestrator = { userId: 1, projectId: 1, kind: 'mission-orchestrator', writes: false };
+    const task = { userId: 1, projectId: 1, kind: 'mission-task', writes: false };
+    expect(
+      blockedBy(orchestrator, [orchestrator, orchestrator, orchestrator], limits),
+    ).toBeNull();
+    expect(
+      blockedBy(task, [task, task, task, task], limits),
+    ).toBeNull();
+    // They still count for the instance limit.
+    const others = [1, 2, 3, 4, 5, 6].map((u) => chat(u, u + 10));
+    expect(blockedBy(orchestrator, others, limits)).toEqual({ code: 'instance' });
+  });
+
+  it('keeps mission tasks out of the project writers', () => {
+    const task = { userId: 1, projectId: 1, kind: 'mission-task', writes: true };
+    expect(blockedBy(workflow(true), [task], limits)).toBeNull();
+    expect(blockedBy(task, [workflow(true)], limits)).toBeNull();
+  });
 });
 
 describe('rateLimitedUntil', () => {

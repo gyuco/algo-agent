@@ -104,6 +104,11 @@ export function SessionList({
                   {keyOf(s) === opening && ` · ${t("sessions.loading")}`}
                 </small>
               </button>
+              {s.missionId != null && (
+                <a className="link" href={`#/workspace/${projectId}/mission/${s.missionId}`}>
+                  {t('missions.open')}
+                </a>
+              )}
             </li>
           ))}
         </ul>

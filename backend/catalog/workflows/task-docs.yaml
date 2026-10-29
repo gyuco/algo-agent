@@ -1,0 +1,20 @@
+description: Documentazione, README e commenti, con controlli e review.
+enabledByDefault: true
+input: Task
+task: true
+result: verify
+steps:
+  - id: write
+    agent: role:implementer
+    prompt: |
+      Write the documentation this task asks for, changing only what it needs.
+      {{task}}
+      Last verification: {{steps.verify}}
+    repeat: { with: verify, until: ok, max: 3, onMax: fail }
+  - id: verify
+    run: [build, lint]
+    agent: role:reviewer
+    verdict: [ok, problemi]
+    prompt: |
+      Check the documentation against the acceptance criteria and the code it describes.
+      {{task}}

@@ -1,0 +1,31 @@
+description: Test prima, poi implementazione, controlli e review.
+enabledByDefault: true
+input: Task
+task: true
+result: verify
+steps:
+  - id: tests
+    agent: role:tester
+    prompt: |
+      Write the tests for this task. Don't touch application code.
+      {{task}}
+  - id: red
+    run: [test]
+    expect: fail
+  - id: implement
+    agent: role:implementer
+    protect: [tests]
+    prompt: |
+      Make these tests pass: {{steps.tests}}
+      {{task}}
+      Last verification: {{steps.verify}}
+      If a test is wrong, don't work around it: explain why in your answer.
+    repeat: { with: verify, until: ok, max: 3, onMax: fail, stop: [test_errati] }
+  - id: verify
+    run: [build, lint, test]
+    agent: role:reviewer
+    verdict: [ok, problemi, test_errati]
+    prompt: |
+      Check the diff against the acceptance criteria.
+      Answer "test_errati" only if the implementer says a test is wrong and you agree.
+      {{task}}

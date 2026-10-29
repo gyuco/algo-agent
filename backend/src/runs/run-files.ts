@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { UserAttachment } from '../providers/provider.js';
@@ -9,14 +10,24 @@ import { RunConfig } from './run-config.js';
 export class RunFiles {
   constructor(private readonly config: RunConfig) {}
 
+  private dir() {
+    return join(this.config.dataDir(), 'run-attachments');
+  }
+
   private file(runId: number) {
-    return join(this.config.dataDir(), 'run-attachments', `${runId}.json`);
+    return join(this.dir(), `${runId}.json`);
+  }
+
+  /** Where a conversation's attachments stay after their turns, so a mission can start from them. */
+  private sessionFile(sessionId: string) {
+    const hash = createHash('sha256').update(sessionId).digest('hex');
+    return join(this.config.dataDir(), 'session-attachments', `${hash}.json`);
   }
 
   async saveAttachments(runId: number, attachments: UserAttachment[]) {
     if (!attachments.length) return;
     const file = this.file(runId);
-    await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
+    await mkdir(this.dir(), { recursive: true, mode: 0o700 });
     await writeFile(file, JSON.stringify(attachments), { mode: 0o600 });
   }
 
@@ -24,6 +35,34 @@ export class RunFiles {
     try {
       return JSON.parse(
         await readFile(this.file(runId), 'utf8'),
+      ) as UserAttachment[];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Keeps the turn's attachments for the conversation; the run's own copy is removed. */
+  async saveSession(sessionId: string, attachments: UserAttachment[]) {
+    if (!attachments.length) return;
+    const previous = await this.sessionAttachments(sessionId);
+    const seen = new Set<string>();
+    const merged = [...previous, ...attachments].filter((a) => {
+      const key = `${a.name}:${a.mediaType}:${a.data.length}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const file = this.sessionFile(sessionId);
+    await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
+    await writeFile(file, JSON.stringify(merged.slice(-5)), {
+      mode: 0o600,
+    });
+  }
+
+  async sessionAttachments(sessionId: string): Promise<UserAttachment[]> {
+    try {
+      return JSON.parse(
+        await readFile(this.sessionFile(sessionId), 'utf8'),
       ) as UserAttachment[];
     } catch {
       return [];

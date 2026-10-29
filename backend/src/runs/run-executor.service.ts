@@ -185,6 +185,13 @@ export class RunExecutorService {
     }
     this.bus.end(run.id);
     this.bus.notify(run.userId, { type: 'changed', runId: run.id });
+    if (run.kind === 'chat' && run.sessionId) {
+      // The conversation may later become a mission, which starts from these files.
+      const attachments = await this.files.attachments(run.id);
+      if (attachments.length) {
+        await this.files.saveSession(run.sessionId, attachments).catch(() => undefined);
+      }
+    }
     await this.files.remove(run.id);
   }
 

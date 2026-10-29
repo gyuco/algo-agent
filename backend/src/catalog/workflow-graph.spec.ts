@@ -16,7 +16,14 @@ const errors = (steps: StepSpec[]) => graphErrors(normalizeSteps(steps));
 
 describe('normalizeSteps', () => {
   it('turns a plain list into the chain it always was', () => {
-    const base = { agent: 'a', prompt: 'P', approval: false };
+    const base = {
+      agent: 'a',
+      prompt: 'P',
+      approval: false,
+      run: null,
+      expect: 'pass',
+      protect: [],
+    };
     const none = { verdict: null, repeat: null };
     expect(normalizeSteps([step(), step(), step()])).toEqual([
       { id: 'step-1', ...base, needs: [], ...none },

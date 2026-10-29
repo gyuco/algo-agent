@@ -273,12 +273,19 @@ export class OpencodeProvider implements AgentProvider {
     ctx.signal.addEventListener('abort', () => stream.abort(), { once: true });
     let session: SessionInfo | null = null;
     try {
-      if (ctx.policy.tools.length) {
-        appTools = this.appMcp.open(
-          ctx.policy.tools.map((k) =>
-            ctx.catalog.tools.get(k)!.create({ cwd: ctx.cwd }),
-          ),
-        );
+      const extra = ctx.appTools ?? [];
+      if (ctx.policy.tools.length || extra.length) {
+        appTools = this.appMcp.open([
+          ...ctx.policy.tools
+            .filter((k) => ctx.catalog.tools.has(k))
+            .map((k) =>
+              ctx.catalog.tools.get(k)!.create({
+                cwd: ctx.cwd,
+                mission: ctx.toolContext?.mission,
+              }),
+            ),
+          ...extra,
+        ]);
       }
       const mcp = this.mcpServers(ctx, appTools);
       runDir = await this.runDir(ctx.userId, {

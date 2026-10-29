@@ -2,7 +2,11 @@ import type { Run } from '../generated/prisma/client.js';
 import type { ChatEvent } from '../providers/provider.js';
 import type { StepStatus } from './run-steps.js';
 
-export type RunKind = 'workflow' | 'chat';
+export type RunKind =
+  | 'workflow'
+  | 'chat'
+  | 'mission-orchestrator'
+  | 'mission-task';
 
 export type RunStatus =
   | 'queued'

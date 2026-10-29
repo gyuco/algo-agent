@@ -4,7 +4,8 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 import { APP_SERVER, FILE_ACCESS } from '../agents/policy.js';
 import { APP_TOOLS, type AppTool } from './app-tools.js';
-import { graphErrors, normalizeSteps } from './workflow-graph.js';
+import { taskContractErrors } from './task-contract.js';
+import { graphErrors, normalizeSteps, sortSteps } from './workflow-graph.js';
 
 export const RESOURCE_KINDS = [
   'agent',
@@ -22,6 +23,14 @@ export type EditableKind = (typeof EDITABLE_KINDS)[number];
 export const keySchema = z
   .string()
   .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'minuscole, cifre e trattini');
+const roleRefSchema = z
+  .string()
+  .regex(/^role:[a-z0-9][a-z0-9-]{0,63}$/, 'ruolo non valido');
+const agentRefSchema = z.union([keySchema, roleRefSchema]);
+/** A verdict value, e.g. `test_errati`: underscores are allowed here, unlike resource keys. */
+const verdictSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, 'minuscole, cifre, trattini e underscore');
 const keys = z.array(z.string()).default([]);
 
 const base = {
@@ -86,26 +95,39 @@ const workflowSchema = z
     ...base,
     /** Label of the text the user types to start a run. */
     input: z.string().default('Input'),
+    /** A task model: it runs only inside a mission, never on its own. */
+    task: z.boolean().optional(),
+    /** The step whose verdict closes a task; task models only. */
+    result: keySchema.optional(),
     // `id` and `needs` stay optional as written; normalizeSteps fills them in.
     steps: z
       .array(
         z
           .object({
             id: keySchema.optional(),
-            agent: keySchema,
-            prompt: z.string().min(1),
+            /** A catalog agent, or `role:<role>` in a task model. Absent in a run-only step. */
+            agent: agentRefSchema.optional(),
+            prompt: z.string().min(1).optional(),
             needs: z.array(keySchema).optional(),
             /** The run stops before the step until the user approves it. */
             approval: z.boolean().optional(),
             /** Values the step ends its answer with, as `VERDETTO: <value>`. */
-            verdict: z.array(keySchema).min(2).max(10).optional(),
+            verdict: z.array(verdictSchema).min(2).max(10).optional(),
+            /** Commands of the plan to run, by name. Task models only. */
+            run: z.array(keySchema).min(1).max(5).optional(),
+            /** Whether the commands must pass or fail. Default `pass`. */
+            expect: z.enum(['pass', 'fail']).optional(),
+            /** Steps whose files this one may not change. Task models only. */
+            protect: z.array(keySchema).optional(),
             /** Runs the step, then the check `with`, until the check says `until`. */
             repeat: z
               .object({
                 with: keySchema,
-                until: keySchema,
+                until: verdictSchema,
                 max: z.number().int().min(1).max(5),
                 onMax: z.enum(['fail', 'continue']).optional(),
+                /** Verdicts that end the block at once. Task models only. */
+                stop: z.array(verdictSchema).optional(),
               })
               .strict()
               .optional(),
@@ -115,7 +137,81 @@ const workflowSchema = z
       .min(1)
       .max(10),
   })
-  .strict();
+  .strict()
+  .superRefine((workflow, ctx) => {
+    const task = workflow.task === true;
+    workflow.steps.forEach((step, i) => {
+      const at = (field: string) => ['steps', i, field];
+      const onlyTask = (field: string) =>
+        ctx.addIssue({
+          code: 'custom',
+          path: at(field),
+          message: `${field} vale solo nei modelli di task`,
+        });
+      if (!task) {
+        if (step.run) onlyTask('run');
+        if (step.expect) onlyTask('expect');
+        if (step.protect) onlyTask('protect');
+        if (step.repeat?.stop) onlyTask('repeat.stop');
+        if (!step.agent) {
+          ctx.addIssue({
+            code: 'custom',
+            path: at('agent'),
+            message: 'un workflow normale richiede un agente',
+          });
+        } else if (step.agent.startsWith('role:')) {
+          ctx.addIssue({
+            code: 'custom',
+            path: at('agent'),
+            message: 'role: vale solo nei modelli di task',
+          });
+        }
+        if (!step.prompt) {
+          ctx.addIssue({
+            code: 'custom',
+            path: at('prompt'),
+            message: 'un workflow normale richiede un prompt',
+          });
+        }
+      } else {
+        if (!step.agent && !step.run) {
+          ctx.addIssue({
+            code: 'custom',
+            path: at('agent'),
+            message: 'serve agent o run',
+          });
+        }
+        if (!step.prompt && !step.run) {
+          ctx.addIssue({
+            code: 'custom',
+            path: at('prompt'),
+            message: 'serve prompt o run',
+          });
+        }
+        if (step.expect && !step.run) {
+          ctx.addIssue({
+            code: 'custom',
+            path: at('expect'),
+            message: 'expect vale solo con run',
+          });
+        }
+      }
+    });
+    if (!task && workflow.result) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['result'],
+        message: 'result vale solo nei modelli di task',
+      });
+    }
+    if (task && !workflow.result) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['result'],
+        message: 'un modello di task richiede result',
+      });
+    }
+  });
 
 export const SCHEMAS = {
   agent: agentSchema,
@@ -213,15 +309,33 @@ export function buildCatalog(entries: CatalogEntry[]): Catalog {
     }
   }
   for (const workflow of catalog.workflows.values()) {
-    const missing = workflow.steps.filter((s) => !catalog.agents.has(s.agent));
+    const missing = workflow.steps.filter(
+      (s) =>
+        s.agent &&
+        !s.agent.startsWith('role:') &&
+        !catalog.agents.has(s.agent),
+    );
     if (missing.length) {
       throw new CatalogError(
         `workflow ${workflow.key}: agenti sconosciuti: ${missing.map((s) => s.agent).join(', ')}`,
       );
     }
-    const errors = graphErrors(normalizeSteps(workflow.steps));
+    const steps = normalizeSteps(workflow.steps);
+    const errors = graphErrors(steps);
     if (errors.length) {
       throw new CatalogError(`workflow ${workflow.key}: ${errors.join('; ')}`);
+    }
+    if (workflow.task) {
+      // The graph is valid, so sortSteps returns the steps in an order the contract can walk.
+      const sorted = sortSteps(steps);
+      if (sorted) {
+        const contract = taskContractErrors(sorted, workflow.result);
+        if (contract.length) {
+          throw new CatalogError(
+            `workflow ${workflow.key}: ${contract.join('; ')}`,
+          );
+        }
+      }
     }
   }
   return catalog;

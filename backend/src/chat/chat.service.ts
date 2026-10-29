@@ -189,6 +189,23 @@ export class ChatService implements RunHandler, OnModuleInit {
       orderBy: { id: 'desc' },
       take: 200,
     });
+    // The orchestrator works in the project folder too: its sessions aren't chats.
+    const missions = await this.prisma.mission.findMany({
+      where: {
+        userId,
+        projectId,
+        OR: [{ sessionId: { not: null } }, { fromSession: { not: null } }],
+      },
+      select: { id: true, sessionId: true, fromSession: true },
+    });
+    const missionSessions = new Set(
+      missions.map((m) => m.sessionId).filter((s): s is string => s !== null),
+    );
+    const missionOfSession = new Map(
+      missions
+        .filter((m) => m.fromSession)
+        .map((m) => [m.fromSession!, m.id] as const),
+    );
     const latest = new Map<string, Run>();
     const unnamed: Run[] = [];
     for (const run of runs) {
@@ -199,11 +216,15 @@ export class ChatService implements RunHandler, OnModuleInit {
       }
     }
     const reason = (id: number) => this.queue.reason(id);
-    const listed = lists.flat().map((s) => ({
-      ...s,
-      runId: null as number | null,
-      ...turnState(latest.get(s.sessionId), reason),
-    }));
+    const listed = lists
+      .flat()
+      .filter((s) => !missionSessions.has(s.sessionId))
+      .map((s) => ({
+        ...s,
+        runId: null as number | null,
+        missionId: missionOfSession.get(s.sessionId) ?? null,
+        ...turnState(latest.get(s.sessionId), reason),
+      }));
     const known = new Set(listed.map((s) => s.sessionId));
     // A conversation whose first turn is still running may not be saved by the provider yet.
     const pending = [...latest.values()]
@@ -226,6 +247,7 @@ export class ChatService implements RunHandler, OnModuleInit {
       title: run.title,
       updatedAt: run.createdAt.toISOString(),
       runId: run.id,
+      missionId: null as number | null,
       ...turnState(run, reason),
     };
   }
@@ -256,10 +278,16 @@ export class ChatService implements RunHandler, OnModuleInit {
         messages = messages.slice(0, turn);
       }
     }
+    const mission = await this.prisma.mission.findFirst({
+      where: { userId, projectId, fromSession: ownRef },
+      select: { id: true },
+      orderBy: { id: 'desc' },
+    });
     return {
       sessionId: ownRef,
       provider: provider.id,
       messages,
+      missionId: mission?.id ?? null,
       /** Model chosen for the latest turn, to offer it again; null: the default one. */
       model: latest?.model ?? null,
       /** Effort chosen for the latest turn; null: the model's default. */

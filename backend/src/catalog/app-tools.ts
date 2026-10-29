@@ -3,10 +3,18 @@ import {
   type SdkMcpToolDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
 
+/** What a mission tool knows about the turn it serves. */
+export interface MissionToolContext {
+  missionId: number;
+  runId: number;
+}
+
 /** What a tool knows about the run it serves. */
 export interface ToolContext {
   /** The project folder, already resolved and confined. */
   cwd: string;
+  /** Set only for the mission orchestrator's tools. */
+  mission?: MissionToolContext;
 }
 
 export interface AppTool {

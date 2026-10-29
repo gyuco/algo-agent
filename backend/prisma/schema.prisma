@@ -17,6 +17,7 @@ model User {
 
   connections ProviderConnection[]
   projects    Project[]
+  missions    Mission[]
   resources   Resource[]
   runs        Run[]
   secrets     Secret[]
@@ -54,12 +55,97 @@ model Project {
 
   resources ProjectResource[]
   runs      Run[]
+  missions  Mission[]
   secrets   Secret[]
   /// Resources defined for this project only.
   own       Resource[]
 
   @@unique([userId, path])
   @@index([userId])
+}
+
+/// A mission: an orchestrator interviews the user, proposes a plan and, from phase 2, runs it.
+model Mission {
+  id                Int       @id @default(autoincrement())
+  projectId         Int
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title             String
+  /// "briefing", "planned", "approved", "aborted"; from phase 2 also the execution states.
+  status            String
+  /// "step" or "auto".
+  mode              String
+  input             String
+  planJson          String?
+  planVersion       Int       @default(0)
+  approvedVersion   Int?
+  orchestratorModel String
+  sessionId         String?
+  /// Chat conversation this mission was born from (`<provider>:<id>`).
+  fromSession       String?
+  /// Null when the project isn't a git repository: the mission can't start.
+  baseBranch        String?
+  branch            String?
+  worktreePath      String?
+  prUrl             String?
+  waitJson          String?
+  budgetJson        String    @default("{}")
+  costUsd           Float     @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  approvedAt        DateTime?
+  finishedAt        DateTime?
+  seenAt            DateTime?
+
+  tasks   MissionTask[]
+  entries MissionEntry[]
+  runs    Run[]
+
+  @@index([projectId])
+  @@index([userId, status])
+  @@index([sessionId])
+}
+
+/// A task of the plan, with the state it has while the mission runs.
+model MissionTask {
+  id           Int       @id @default(autoincrement())
+  missionId    Int
+  mission      Mission   @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  /// Id of the task in the plan, unique in the mission.
+  key          String
+  milestone    String
+  status       String    @default("pending")
+  branch       String?
+  worktreePath String?
+  runId        Int?
+  attempts     Int       @default(0)
+  notesJson    String    @default("[]")
+  reportJson   String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  runs    Run[]
+  entries MissionEntry[]
+
+  @@unique([missionId, key])
+  @@index([missionId])
+}
+
+/// The mission's append-only log: status changes, plan versions, questions, notes.
+model MissionEntry {
+  id        Int         @id @default(autoincrement())
+  missionId Int
+  mission   Mission     @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  taskId    Int?
+  task      MissionTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  /// "status", "turn", "question", "decision", "wait", "resume", "note", "plan", "budget", "pr", "error".
+  kind      String
+  notify    Boolean     @default(false)
+  dataJson  String
+  createdAt DateTime    @default(now())
+
+  @@index([missionId])
 }
 
 /// A user's resource (agent, MCP server, skill or workflow): in their library, usable in all their projects, or in one project only.
@@ -124,7 +210,7 @@ model Run {
   project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId       Int
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// "workflow" or "chat"
+  /// "workflow", "chat", "mission-orchestrator" or "mission-task"
   kind         String    @default("workflow")
   /// "queued", "running", "waiting", "done", "failed", "aborted" or "interrupted"
   status       String
@@ -150,6 +236,11 @@ model Run {
   provider     String?
   /// Whether some agent of the run may write files in the project folder.
   writes       Boolean   @default(false)
+  /// Mission orchestrator turn or mission task this run belongs to.
+  missionId     Int?
+  mission       Mission?     @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  missionTaskId Int?
+  missionTask   MissionTask? @relation(fields: [missionTaskId], references: [id], onDelete: SetNull)
   /// Steps run so far (JSON): [{ agent, output, isError }]
   stepsJson    String    @default("[]")
   costUsd      Float     @default(0)
@@ -171,6 +262,8 @@ model Run {
   @@index([status, createdAt])
   @@index([userId, status])
   @@index([sessionId])
+  @@index([missionId])
+  @@index([missionTaskId])
   @@map("WorkflowRun")
 }
 

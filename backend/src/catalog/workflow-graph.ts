@@ -1,11 +1,18 @@
 /** A workflow step as written: `id` and `needs` may be left out. */
 export interface StepSpec {
   id?: string;
-  agent: string;
-  prompt: string;
+  /** A catalog agent, or `role:<role>` in a task model. Absent in a run-only step. */
+  agent?: string;
+  prompt?: string;
   needs?: string[];
   approval?: boolean;
   verdict?: string[];
+  /** Shell commands of the plan to run, by name. Task models only. */
+  run?: string[];
+  /** Whether the commands must pass or fail. Default `pass`. */
+  expect?: 'pass' | 'fail';
+  /** Steps whose files this one may not change. Task models only. */
+  protect?: string[];
   repeat?: Repeat;
 }
 
@@ -16,17 +23,24 @@ export interface Repeat {
   max: number;
   /** At `max` without `until`: the run fails, or goes on with a warning. */
   onMax?: 'fail' | 'continue';
+  /** Verdicts that end the block at once. Task models only. */
+  stop?: string[];
 }
 
 /** A step with its defaults filled in. */
 export interface GraphStep {
   id: string;
+  /** Empty in a run-only step; task models resolve `role:` when the plan is executed. */
   agent: string;
+  /** Empty in a run-only step. */
   prompt: string;
   needs: string[];
   approval: boolean;
   verdict: string[] | null;
-  repeat: Required<Repeat> | null;
+  run: string[] | null;
+  expect: 'pass' | 'fail';
+  protect: string[];
+  repeat: (Required<Omit<Repeat, 'stop'>> & { stop: string[] }) | null;
 }
 
 const STEP_REF = /\{\{steps\.([^}]*)\}\}/g;
@@ -46,12 +60,17 @@ export function normalizeSteps(steps: StepSpec[]): GraphStep[] {
   const ids = steps.map((s, i) => s.id ?? `step-${i + 1}`);
   return steps.map((s, i) => ({
     id: ids[i],
-    agent: s.agent,
-    prompt: s.prompt,
+    agent: s.agent ?? '',
+    prompt: s.prompt ?? '',
     needs: s.needs ?? (i === 0 ? [] : [ids[i - 1]]),
     approval: s.approval ?? false,
     verdict: s.verdict ?? null,
-    repeat: s.repeat ? { onMax: 'fail', ...s.repeat } : null,
+    run: s.run ?? null,
+    expect: s.expect ?? 'pass',
+    protect: s.protect ?? [],
+    repeat: s.repeat
+      ? { onMax: 'fail', stop: [], ...s.repeat }
+      : null,
   }));
 }
 

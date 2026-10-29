@@ -1,13 +1,10 @@
-import {
-  BadRequestException,
-  HttpException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { homedir } from 'node:os';
+import type { AppToolDefinition } from '../app-mcp/app-mcp.js';
 import type { AgentSpec } from '../catalog/catalog.js';
 import { CatalogService } from '../catalog/catalog.service.js';
+import type { ToolContext } from '../catalog/app-tools.js';
 import { resolveWorkspace } from '../chat/workspace.js';
 import { ConnectionsService } from '../connections/connections.service.js';
 import { formatRef, parseRef } from '../providers/model-ref.js';
@@ -26,6 +23,8 @@ export interface RunRequest {
   project: { id: number; path: string };
   /** Catalog agent that answers; without one the user chats with the model directly. */
   agent?: string;
+  /** An agent outside the catalog, e.g. the mission orchestrator. */
+  agentSpec?: AgentSpec;
   prompt: UserTurn;
   /** Session to continue, as a `session` event returned it. */
   sessionId?: string;
@@ -33,6 +32,12 @@ export interface RunRequest {
   model?: string;
   /** One of the chosen model's effort levels. */
   effort?: string;
+  /** Tools of this run that aren't catalog resources, e.g. the mission tools. */
+  appTools?: AppToolDefinition[];
+  /** What those tools know about the run. */
+  toolContext?: ToolContext;
+  /** True once a closing tool ran: every other tool of the turn is denied. */
+  turnClosed?: () => boolean;
   signal: AbortSignal;
 }
 
@@ -139,6 +144,17 @@ export class AgentRunnerService {
     return { catalog, agent, policy };
   }
 
+  /** An agent that isn't in the catalog, with its own policy narrowed to the project's switches. */
+  private async syntheticAgent(
+    userId: number,
+    projectId: number,
+    agent: AgentSpec,
+  ) {
+    const catalog = await this.catalogService.forProject(userId, projectId);
+    const enabled = await this.resources.isEnabled(projectId, catalog);
+    return { catalog, agent, policy: this.resources.policyFor(agent, enabled) };
+  }
+
   /**
    * A direct chat: the main thread may use everything the project has switched
    * on, and delegate to its agents, each with its own policy. Stdio MCP servers
@@ -213,9 +229,11 @@ export class AgentRunnerService {
    * and the model. Returns the provider and whether the turn may write files.
    */
   async check(req: Omit<RunRequest, 'prompt' | 'signal'>) {
-    const chosen = req.agent
-      ? await this.agentFor(req.userId, req.project.id, req.agent)
-      : null;
+    const chosen = req.agentSpec
+      ? await this.syntheticAgent(req.userId, req.project.id, req.agentSpec)
+      : req.agent
+        ? await this.agentFor(req.userId, req.project.id, req.agent)
+        : null;
     const { provider } = await this.target(req, chosen?.agent);
     // A direct chat may write: it gets everything the project has on.
     return {
@@ -226,17 +244,25 @@ export class AgentRunnerService {
 
   /** Yields chat events as the provider streams them. */
   async *run(req: RunRequest): AsyncGenerator<ChatEvent> {
-    const chosen = req.agent
-      ? await this.agentFor(req.userId, req.project.id, req.agent)
-      : null;
+    const chosen = req.agentSpec
+      ? await this.syntheticAgent(req.userId, req.project.id, req.agentSpec)
+      : req.agent
+        ? await this.agentFor(req.userId, req.project.id, req.agent)
+        : null;
     const cwd = await resolveWorkspace(req.project.path, this.workspaceRoot());
     const { provider, model, sessionId } = await this.target(
       req,
       chosen?.agent,
     );
-    const { catalog, agent, policy, subagents } = chosen
+    const base = chosen
       ? { ...chosen, policy: narrow(chosen.policy, provider), subagents: [] }
       : await this.directChat(req.userId, req.project.id, provider);
+    const appTools = req.appTools ?? [];
+    const policy: AgentPolicy = {
+      ...base.policy,
+      tools: [...base.policy.tools, ...appTools.map((t) => t.name)],
+    };
+    const { catalog, agent, subagents } = base;
     const ids = this.providers.ids();
 
     let started = false;
@@ -252,6 +278,9 @@ export class AgentRunnerService {
         model,
         effort: req.effort,
         sessionId,
+        appTools,
+        toolContext: req.toolContext,
+        turnClosed: req.turnClosed,
         subagents: subagents.map((s) => ({
           ...s,
           model: subagentModel(s.agent, provider.id, ids),

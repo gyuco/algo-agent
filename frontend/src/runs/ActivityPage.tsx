@@ -18,7 +18,7 @@ function duration(from: string, to: Date) {
   return m ? `${m}m ${seconds % 60}s` : `${seconds}s`
 }
 
-/** Chats and workflows of every project: what runs, what waits, what ended, with their actions. */
+/** Chats, missions and workflows of every project: what runs, what waits, what ended, with their actions. */
 export function ActivityPage({ state }: { state: ActiveRunsState }) {
   const { t } = useI18n()
   const [permission, setPermission] = useState(() =>
@@ -125,7 +125,15 @@ function ActivityRow({
     <li className={run.unread ? 'activity-item unread' : 'activity-item'}>
       <div className="activity-main">
         <span className="activity-title">
-          <span className="badge">{t(run.kind === 'chat' ? 'activity.chat' : 'activity.workflow')}</span>{' '}
+          <span className="badge">
+            {t(
+              run.kind === 'chat'
+                ? 'activity.chat'
+                : run.kind === 'workflow'
+                  ? 'activity.workflow'
+                  : 'activity.mission',
+            )}
+          </span>{' '}
           {run.title || t('sessions.untitled')}
           {run.unread && <span className="badge accent">{t('activity.unread')}</span>}
         </span>

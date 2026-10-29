@@ -117,3 +117,61 @@ describe('buildCatalog', () => {
     expect(() => buildCatalog(entries)).toThrow();
   });
 });
+
+describe('task models in the catalog', () => {
+  const reviewer = agent('reviewer', { permissions: { files: 'read' } });
+
+  it('loads a task model with role references and run-only steps', () => {
+    const catalog = buildCatalog([
+      agent('reviewer', { permissions: { files: 'read' } }),
+      {
+        kind: 'workflow',
+        key: 'task',
+        spec: {
+          description: 'x',
+          task: true,
+          result: 'check',
+          steps: [
+            { agent: 'role:implementer', prompt: 'write' },
+            { id: 'check', agent: 'reviewer', run: ['test'], verdict: ['ok', 'problemi'], prompt: 'check' },
+          ],
+        },
+      },
+    ]);
+    expect(catalog.workflows.get('task')?.task).toBe(true);
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['a task model without result', { task: true, steps: [{ agent: 'role:a', prompt: 'P' }] }],
+    [
+      'task fields in a normal workflow',
+      {
+        steps: [{ agent: 'a', prompt: 'P', run: ['test'] }],
+      },
+    ],
+    [
+      'a result in a normal workflow',
+      { result: 'step-1', steps: [{ agent: 'a', prompt: 'P' }] },
+    ],
+    [
+      'a role in a normal workflow',
+      { steps: [{ agent: 'role:a', prompt: 'P' }] },
+    ],
+    [
+      'a step with neither agent nor run in a task',
+      { task: true, result: 'step-1', steps: [{ prompt: 'P' }] },
+    ],
+  ])('rejects %s', (_, extra) => {
+    expect(() =>
+      buildCatalog([
+        agent('a'),
+        reviewer,
+        {
+          kind: 'workflow',
+          key: 'w',
+          spec: { description: 'x', ...extra },
+        },
+      ]),
+    ).toThrow();
+  });
+});

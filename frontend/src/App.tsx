@@ -24,7 +24,7 @@ type Page =
   | { name: 'activity' }
   | { name: 'profile' }
   /** `runId` opens that run in the project: its conversation or its workflow. */
-  | { name: 'workspace'; projectId: number; runId?: number }
+  | { name: 'workspace'; projectId: number; runId?: number; missionId?: number }
 
 function pageFromHash(): Page {
   const hash = window.location.hash
@@ -33,12 +33,13 @@ function pageFromHash(): Page {
   if (hash === '#/connections') return { name: 'connections' }
   if (hash === '#/activity') return { name: 'activity' }
   if (hash === '#/profile') return { name: 'profile' }
-  const workspace = /^#\/workspace\/(\d+)(?:\/run\/(\d+))?$/.exec(hash)
+  const workspace = /^#\/workspace\/(\d+)(?:\/run\/(\d+))?(?:\/mission\/(\d+))?$/.exec(hash)
   if (workspace) {
     return {
       name: 'workspace',
       projectId: Number(workspace[1]),
       runId: workspace[2] ? Number(workspace[2]) : undefined,
+      missionId: workspace[3] ? Number(workspace[3]) : undefined,
     }
   }
   return { name: 'home' }
@@ -171,6 +172,7 @@ function App() {
             key={page.projectId}
             projectId={page.projectId}
             runId={page.runId}
+            missionId={page.missionId}
             connections={connections}
             runs={runs}
           />

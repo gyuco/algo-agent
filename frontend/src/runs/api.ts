@@ -1,7 +1,11 @@
 import { api, apiEvents, ApiError } from '../api/client'
 import type { ChatEvent } from '../chat/api'
 
-export type RunKind = 'workflow' | 'chat'
+export type RunKind =
+  | 'workflow'
+  | 'chat'
+  | 'mission-orchestrator'
+  | 'mission-task'
 
 export type RunStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'aborted' | 'interrupted'
 
@@ -58,6 +62,8 @@ export interface Run {
   input: string
   workflow: string | null
   sessionId: string | null
+  missionId: number | null
+  missionTaskId: number | null
   agent: string | null
   model: string | null
   effort: string | null
@@ -108,7 +114,7 @@ function wait(ms: number, signal: AbortSignal) {
  * connection, with growing pauses, until `ended` says so or `signal` fires.
  * A 4xx answer is final and thrown.
  */
-async function* reconnecting<T>(
+export async function* reconnecting<T>(
   open: () => AsyncGenerator<{ id: number | null; data: T }>,
   signal: AbortSignal,
   onId: (id: number) => void = () => undefined,

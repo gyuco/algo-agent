@@ -86,9 +86,10 @@ export class ProjectResourcesService {
         key: w.key,
         description: w.description,
         input: w.input,
-        agents: w.steps.map((s) => s.agent),
+        agents: w.steps.map((s) => s.agent).filter(Boolean),
         enabled: enabled('workflow', w.key),
         own: own('workflow', w.key),
+        task: w.task === true,
       })),
     };
   }

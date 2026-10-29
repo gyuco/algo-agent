@@ -18,6 +18,15 @@ export interface RunSlot {
   writes: boolean;
 }
 
+/** Per-user limit of each kind of run; null means no limit of its own. */
+function perUserLimit(kind: string, limits: RunLimits): number | null {
+  if (kind === 'chat') return limits.chatsPerUser;
+  if (kind === 'workflow') return limits.workflowsPerUser;
+  // A mission takes one orchestrator turn at a time (the mission state guarantees it)
+  // and its tasks are governed by MISSIONS_MAX_RUNNING_TASKS (phase 3).
+  return null;
+}
+
 /**
  * Why `run` can't start next to `running`, or null when it can. Only
  * workflows count for the project limit: they run unattended, while a chat is
@@ -30,9 +39,11 @@ export function blockedBy(
 ): WaitReason | null {
   if (running.length >= limits.concurrent) return { code: 'instance' };
   const mine = running.filter((r) => r.userId === run.userId);
-  const perUser =
-    run.kind === 'chat' ? limits.chatsPerUser : limits.workflowsPerUser;
-  if (mine.filter((r) => r.kind === run.kind).length >= perUser) {
+  const perUser = perUserLimit(run.kind, limits);
+  if (
+    perUser !== null &&
+    mine.filter((r) => r.kind === run.kind).length >= perUser
+  ) {
     return { code: 'user' };
   }
   const writer = (r: RunSlot) => r.kind === 'workflow' && r.writes;

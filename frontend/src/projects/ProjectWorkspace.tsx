@@ -8,6 +8,8 @@ import { useI18n } from '../i18n/useI18n'
 import { runsApi, type Run } from '../runs/api'
 import type { ActiveRunsState } from '../runs/useActiveRuns'
 import { LibraryPage } from '../library/LibraryPage'
+import { MissionStartDialog } from '../missions/MissionStartDialog'
+import { MissionsPanel } from '../missions/MissionsPanel'
 import { SecretsPanel } from '../vault/SecretsPanel'
 import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
@@ -17,12 +19,14 @@ interface Props {
   projectId: number
   /** Run to open: its conversation in the chat, or its workflow run. */
   runId?: number
+  /** Mission to open in the Missions tab. */
+  missionId?: number
   connections: ConnectionsState
   runs: ActiveRunsState
 }
 
-/** One project's workspace: chat, workflows and the agents it has on. Key it by project. */
-export function ProjectWorkspace({ projectId, runId, connections, runs }: Props) {
+/** One project's workspace: chat, missions, workflows and the agents it has on. Key it by project. */
+export function ProjectWorkspace({ projectId, runId, missionId, connections, runs }: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
@@ -36,6 +40,10 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
   const [error, setError] = useState<string | null>(null)
   /** The chat, for the bar's "new conversation". */
   const chat = useRef<ChatPanelHandle>(null)
+  /** Conversation being turned into a mission. */
+  const [transformSession, setTransformSession] = useState<string | null>(null)
+  /** Mission to open in the Missions tab, e.g. the one just created. */
+  const [openMission, setOpenMission] = useState<number | null>(null)
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '')
 
@@ -56,9 +64,25 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
     runsApi.get(runId).then((run) => {
       if (run.projectId !== projectId) return
       setOpened(run)
-      setView(run.kind === 'chat' ? 'chat' : 'workflows')
+      setView(
+        run.kind === 'chat'
+          ? 'chat'
+          : run.kind === 'workflow'
+            ? 'workflows'
+            : 'missions',
+      )
+      if (run.kind !== 'chat' && run.kind !== 'workflow') {
+        setOpenMission(run.missionId ?? null)
+      }
     }, fail)
   }, [runId, projectId])
+
+  /** A mission link from the chat opens it in the Missions tab. */
+  useEffect(() => {
+    if (!missionId) return
+    setOpenMission(missionId)
+    setView('missions')
+  }, [missionId])
 
   /** Leaves the conversations list behind when the chat isn't shown. */
   function openView(next: WorkspaceView) {
@@ -169,6 +193,16 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
                 agent={agentKey}
                 onAgentChange={setAgent}
                 tools={chatTools}
+                onTransformToMission={setTransformSession}
+              />
+            </div>
+          )}
+          {connected && (
+            <div className="view-panel" hidden={view !== 'missions'}>
+              <MissionsPanel
+                projectId={project.id}
+                initialMissionId={openMission}
+                onOpened={() => setOpenMission(null)}
               />
             </div>
           )}
@@ -176,7 +210,7 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
             <div className="view-panel" hidden={view !== 'workflows'}>
               <WorkflowsPanel
                 projectId={project.id}
-                workflows={resources.workflows.filter((w) => w.enabled)}
+                workflows={resources.workflows.filter((w) => w.enabled && !w.task)}
                 onUsage={connections.updateDetails}
                 runs={runs}
                 open={opened?.kind === 'workflow' ? opened : null}
@@ -194,6 +228,18 @@ export function ProjectWorkspace({ projectId, runId, connections, runs }: Props)
             <SecretsPanel projectId={project.id} onNames={setSecretNames} />
           </div>
         </>
+      )}
+      {project && transformSession && (
+        <MissionStartDialog
+          projectId={project.id}
+          fromSession={transformSession}
+          onClose={() => setTransformSession(null)}
+          onCreated={(missionId) => {
+            setTransformSession(null)
+            setOpenMission(missionId)
+            setView('missions')
+          }}
+        />
       )}
     </>
   )

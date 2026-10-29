@@ -90,6 +90,8 @@ interface Props {
   onAgentChange: (key: string) => void;
   /** Actions in the card's heading: agent, history, new conversation, views. */
   tools?: ReactNode;
+  /** Turns the conversation into a mission; shown when it has a session and no turn in progress. */
+  onTransformToMission?: (sessionId: string) => void;
 }
 
 /** What the workspace bar can ask of the chat. */
@@ -121,6 +123,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     agent: agentKey,
     onAgentChange,
     tools,
+    onTransformToMission,
   },
   ref,
 ) {
@@ -142,6 +145,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [sessionId, setSessionId] = useState<string | undefined>();
+  /** Mission born from this conversation, to link back to it. */
+  const [missionId, setMissionId] = useState<number | null>(null);
   /** Provider the conversation runs on: it can't move to another one. */
   const [sessionProvider, setSessionProvider] = useState<string | undefined>();
   /** Past conversations shown in place of the chat. */
@@ -460,6 +465,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     stopFollowing();
     setSessionId(undefined);
     setSessionProvider(undefined);
+    setMissionId(null);
     setMessages([]);
     setFocus(null);
   }
@@ -490,6 +496,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
       setMessages([]);
       setSessionId(run.sessionId ?? undefined);
       setSessionProvider(run.provider ?? undefined);
+      setMissionId(null);
       restoreModel(run.model, run.effort);
       if (isActive(run.status)) {
         showTurn(run.id, run.input);
@@ -519,6 +526,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
       setMessages(history.messages.map(fromHistory));
       setSessionId(history.sessionId);
       setSessionProvider(history.provider);
+      setMissionId(history.missionId);
       restoreModel(history.model, history.effort);
       const last = history.lastRun;
       if (last && isActive(last.status)) showTurn(last.runId, last.input);
@@ -620,6 +628,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
             {path}
           </code>
         </div>
+        {missionId !== null && (
+          <a className="link" href={`#/workspace/${projectId}/mission/${missionId}`}>
+            {t("missions.open")}
+          </a>
+        )}
+        {onTransformToMission && sessionId && !streaming && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => onTransformToMission(sessionId)}
+          >
+            {t("missions.transform")}
+          </button>
+        )}
         {tools && <div className="chat-tools">{tools}</div>}
       </header>
 

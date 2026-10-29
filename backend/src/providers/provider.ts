@@ -1,6 +1,8 @@
 import type { AgentPolicy } from '../agents/policy.js';
+import type { AppToolDefinition } from '../app-mcp/app-mcp.js';
 import type { AttachmentType } from '../chat/dto/chat.dto.js';
 import type { AgentSpec, Catalog } from '../catalog/catalog.js';
+import type { ToolContext } from '../catalog/app-tools.js';
 
 export type ChatEvent =
   /** `sessionId` is opaque to clients: send it back to continue the conversation. */
@@ -67,6 +69,12 @@ export interface RunContext {
   effort?: string;
   /** The provider's own id of the session to continue. */
   sessionId?: string;
+  /** Tools of this run that aren't catalog resources (the mission tools). */
+  appTools?: AppToolDefinition[];
+  /** What those tools know about the run. */
+  toolContext?: ToolContext;
+  /** True once a closing tool ran: every other tool of the turn is denied. */
+  turnClosed?: () => boolean;
   /** Agents the main thread may delegate to; empty unless the provider supports it. */
   subagents: Subagent[];
   signal: AbortSignal;
