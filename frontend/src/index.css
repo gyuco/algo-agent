@@ -2293,3 +2293,125 @@ button.icon.copy:focus-visible {
   justify-content: space-between;
   align-items: center;
 }
+
+/* Missions: tasks, review waits and diffs. */
+.mission-left {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tabs button {
+  padding: 6px 12px;
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.task-list h3 {
+  margin: 0 0 6px;
+}
+
+.task-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+  text-align: left;
+  background: var(--card, #fff);
+  border: 1px solid var(--line, #ddd);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: inherit;
+}
+
+.task-row.selected {
+  border-color: var(--accent, #0a7);
+  box-shadow: 0 0 0 1px var(--accent, #0a7) inset;
+}
+
+.task-key {
+  font-family: var(--mono, monospace);
+}
+
+.task-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-row small {
+  grid-column: 1 / -1;
+}
+
+.task-last {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-view,
+.task-wait {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.commands,
+.error-list {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.diff-file {
+  min-width: 0;
+}
+
+.diff-body {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line, #ddd);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+
+.diff-add {
+  color: var(--ok, #177d3a);
+}
+
+.diff-del {
+  color: var(--error, #b3261e);
+}
+
+.diff-hunk {
+  color: var(--accent, #0a7);
+}
+
+.badge.danger {
+  background: var(--error-bg, #fde7e5);
+  color: var(--error, #b3261e);
+}

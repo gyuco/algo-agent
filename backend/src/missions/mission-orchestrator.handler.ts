@@ -73,6 +73,7 @@ export class MissionOrchestratorHandler implements RunHandler, OnModuleInit {
     });
 
     let outcome: RunOutcome = 'done';
+    let costUsd = 0;
     for await (const event of this.runner.run({
       userId: run.userId,
       project,
@@ -103,8 +104,19 @@ export class MissionOrchestratorHandler implements RunHandler, OnModuleInit {
         });
       }
       if (event.type === 'error') outcome = 'failed';
-      if (event.type === 'done' && event.isError) outcome = 'failed';
+      if (event.type === 'done') {
+        costUsd += event.costUsd;
+        if (event.isError) outcome = 'failed';
+      }
       yield event;
+    }
+    if (costUsd > 0) {
+      await this.prisma.mission
+        .update({
+          where: { id: mission.id },
+          data: { costUsd: { increment: costUsd } },
+        })
+        .catch(() => undefined);
     }
     return outcome;
   }

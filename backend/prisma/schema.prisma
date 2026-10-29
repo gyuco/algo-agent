@@ -117,9 +117,12 @@ model MissionTask {
   /// Id of the task in the plan, unique in the mission.
   key          String
   milestone    String
+  /// "pending", "running", "review", "merging", "blocked", "done", "skipped" or "aborted".
   status       String    @default("pending")
   branch       String?
   worktreePath String?
+  /// The commit this attempt started from: the task's diff measures from it.
+  taskBase     String?
   runId        Int?
   attempts     Int       @default(0)
   notesJson    String    @default("[]")
@@ -245,6 +248,8 @@ model Run {
   missionTask   MissionTask? @relation(fields: [missionTaskId], references: [id], onDelete: SetNull)
   /// Steps run so far (JSON): [{ agent, output, isError }]
   stepsJson    String    @default("[]")
+  /// A task run's graph frozen when it starts (JSON).
+  specJson     String?
   costUsd      Float     @default(0)
   error        String?
   /// Run this one resumes.

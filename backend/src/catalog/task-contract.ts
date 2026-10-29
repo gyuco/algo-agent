@@ -76,6 +76,11 @@ export function taskContractErrors(
 
   // 5. At most three attempts; 6. stop verdicts belong to result and aren't ok.
   for (const step of steps) {
+    if (step.prompt.includes('{{input}}')) {
+      errors.push(
+        `passo ${step.id}, prompt: usa {{task}}, non {{input}}, nei modelli di task`,
+      );
+    }
     if (step.repeat && step.repeat.max > 3) {
       errors.push(`passo ${step.id}, repeat.max: al massimo 3 nei modelli di task`);
     }

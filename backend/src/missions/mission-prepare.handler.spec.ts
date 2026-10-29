@@ -84,28 +84,37 @@ async function rig(target: Plan = plan()) {
   const baseCommit = gitBin(repo, 'rev-parse', 'HEAD');
 
   const state = mission(target);
-  const prisma = {
-    mission: {
-      findUnique: async () => ({
-        ...state,
-        project: { id: state.projectId, path: repo },
-      }),
-      update: async ({ data }: { data: Partial<Mission> }) => {
-        Object.assign(state, data);
-        return state;
-      },
-      updateMany: async ({
-        where,
-        data,
-      }: {
-        where: { status?: string };
-        data: Partial<Mission>;
-      }) => {
-        if (where.status && state.status !== where.status) return { count: 0 };
-        Object.assign(state, data);
-        return { count: 1 };
-      },
+  const missionTable = {
+    findUnique: async () => ({
+      ...state,
+      project: { id: state.projectId, path: repo },
+    }),
+    update: async ({ data }: { data: Partial<Mission> }) => {
+      Object.assign(state, data);
+      return state;
     },
+    updateMany: async ({
+      where,
+      data,
+    }: {
+      where: { status?: string };
+      data: Partial<Mission>;
+    }) => {
+      if (where.status && state.status !== where.status) return { count: 0 };
+      Object.assign(state, data);
+      return { count: 1 };
+    },
+  };
+  const prisma = {
+    mission: missionTable,
+    missionTask: {
+      createMany: async ({ data }: { data: unknown[] }) => ({ count: data.length }),
+    },
+    $transaction: async <T>(fn: (tx: unknown) => Promise<T>) =>
+      fn({
+        mission: missionTable,
+        missionTask: { createMany: async () => ({ count: 1 }) },
+      }),
   };
   const config = new RunConfig({
     get: (name: string) =>
@@ -138,6 +147,7 @@ async function rig(target: Plan = plan()) {
     config,
     { variables: async () => ({}) } as never,
     missions as never,
+    { wake: () => undefined } as never,
     { register: () => undefined } as never,
   );
   const run = { id: 99, missionId: state.id } as Run;

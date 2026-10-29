@@ -34,6 +34,27 @@ export function missionWorktreePath(
   );
 }
 
+/** `mission/<id>/<task key>`: a task's branch, merged into the mission's. */
+export function taskBranchName(missionId: number, key: string) {
+  return `mission/${missionId}/${key}`;
+}
+
+/** `<DATA_DIR>/worktrees/<projectId>/<missionId>/<key>`. */
+export function taskWorktreePath(
+  dataDir: string,
+  projectId: number,
+  missionId: number,
+  key: string,
+) {
+  return join(
+    dataDir,
+    'worktrees',
+    String(projectId),
+    String(missionId),
+    key,
+  );
+}
+
 /** The folder all worktrees of a project live in. */
 export function projectWorktreesDir(dataDir: string, projectId: number) {
   return join(dataDir, 'worktrees', String(projectId));

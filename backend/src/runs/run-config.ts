@@ -21,6 +21,7 @@ export class RunConfig {
       chatsPerUser: this.int('RUNS_MAX_CHATS_PER_USER', 3),
       writersPerProject: this.int('RUNS_MAX_WRITERS_PER_PROJECT', 1),
       queuedPerUser: this.int('RUNS_MAX_QUEUED_PER_USER', 20),
+      missionTasks: this.int('MISSIONS_MAX_RUNNING_TASKS', 6),
     };
   }
 
@@ -47,6 +48,11 @@ export class RunConfig {
   /** How much of a command's output is kept, its tail. */
   missionCheckOutputKb() {
     return this.int('MISSION_CHECK_OUTPUT_KB', 64);
+  }
+
+  /** How much of a previous attempt's diff `{{task}}` carries, in KB. */
+  missionTaskDiffKb() {
+    return this.int('MISSION_TASK_DIFF_PROMPT_KB', 20);
   }
 
   eventsRetentionDays() {

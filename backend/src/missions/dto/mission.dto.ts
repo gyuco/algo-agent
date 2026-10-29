@@ -83,6 +83,14 @@ export class ApproveMissionDto {
   mode: MissionMode;
 }
 
+export class RedoTaskDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4_000)
+  note: string;
+}
+
 export class MissionsQueryDto {
   @IsOptional()
   @IsString()

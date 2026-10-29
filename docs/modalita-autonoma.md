@@ -125,12 +125,13 @@ Fissate con l'utente prima di scrivere questo documento:
 | `missionId` | Int | |
 | `key` | String | Id del task nel piano, unico nella missione. |
 | `milestone` | String | Id della milestone. |
-| `status` | String | `pending`, `running`, `review`, `blocked`, `done`, `skipped`, `failed`, `aborted`. |
+| `status` | String | `pending`, `running`, `review`, `merging`, `blocked`, `done`, `skipped`, `aborted`. `merging` copre il tempo del merge, con il lock della missione; `failed` resta inutilizzato: un errore è `blocked` con un motivo. |
 | `branch`, `worktreePath` | String? | `mission/<id>/<key>`, creati quando il task parte. |
+| `taskBase` | String? | Il commit da cui parte il tentativo corrente: il diff e `protect` si misurano da qui. |
 | `runId` | Int? | Run in corso o ultimo run. |
 | `attempts` | Int | Volte in cui il task è stato rifatto con una nota dell'utente o dopo un blocco. |
 | `notesJson` | String | Note dell'utente da "Rifai con nota", in ordine. |
-| `reportJson` | String? | Riepilogo per l'utente e per l'orchestratore: diff (file e righe), esito dei controlli, verdetto e testo della review, iterazioni, costo. |
+| `reportJson` | String? | Riepilogo per l'utente e per l'orchestratore: `{ attempt, diff: { files, added, removed }, checks, review, iterations, warnings, costUsd, blocked?: { reason, detail }, summary }`. `blocked.reason` è `attempts`, `test_errati`, `error`, `config` o `merge`. |
 | `startedAt`, `finishedAt` | DateTime? | |
 
 Le dipendenze e i criteri restano nel piano: il task ne tiene solo lo stato.
@@ -156,6 +157,8 @@ Registro della missione, in sola aggiunta.
   - `mission-prepare`: la preparazione dopo l'approvazione (branch, worktree, controllo di base).
 - Nuovi campi `missionId` e `missionTaskId`, facoltativi, con indice. `missionId` è `Cascade`
   verso `Mission`; `missionTaskId` è `SetNull` verso `MissionTask`.
+- Nuovo campo `specJson`: il grafo congelato di un run `mission-task`. Una ripresa usa quello,
+  non il catalogo attuale; il prossimo tentativo lo ricostruisce.
 
 Il briefing usa run di tipo `mission-orchestrator`, con un handler dedicato che riusa
 `AgentRunnerService`: allegati, `sessionId`, riaggancio, stop e sezione Attività funzionano
@@ -391,8 +394,8 @@ briefing ⇄ planned ──(approva)──▶ approved ──(prepare ok)──�
 |---|---|---|
 | `question` | Nel briefing, una domanda di `ask_user` aspetta la risposta. | Rispondi (testo o opzione) · Ferma |
 | `baseline` | Nella preparazione dopo l'approvazione, `setup` o i controlli falliscono già sul branch della missione (§8.4). | Riprova (dopo aver sistemato il branch base) · Rivedi il piano (comandi) · Ferma |
-| `task_review` | Passo-passo: un task ha superato la verifica. | Ok · Rifai con nota · Rivedi il piano · Passa ad automatico |
-| `task_blocked` | Un task ha esaurito i tentativi. | Rifai con nota · Salta il task · Rivedi il piano |
+| `task_review` | Passo-passo: un task ha superato la verifica. | Ok · Rifai con nota (in fase 3; "Rivedi il piano" e "Passa ad automatico" arrivano in fase 5) |
+| `task_blocked` | Un task ha esaurito i tentativi, un test è `test_errati`, c'è un errore o un merge in conflitto. | Rifai con nota · Salta il task (in fase 3) |
 | `scope` | Il diff di un task esce dal perimetro (§7.4). | Accetta (il perimetro si allarga e la decisione si registra) · Rifai con nota · Rivedi il piano |
 | `weekly_budget` | La missione ha consumato la sua quota settimanale (§9). | Continua (concede un'altra quota) · Passa a passo-passo · Ferma |
 | `milestone` | Solo se la revisione di fine milestone propone cambi che richiedono l'utente (§7.3). | Approva il piano rivisto · Commenta |
@@ -449,7 +452,8 @@ restituisce all'agente il motivo, così può correggere prima della verifica.
 |---|---|
 | `MissionsModule` | Raggruppa i servizi qui sotto. |
 | `MissionsService` | Creazione, briefing, approvazione, azioni dell'utente, cambi di stato. Ogni cambio è un update condizionato sullo stato atteso, come per i run. |
-| `MissionScheduler` | A ogni evento rilevante (task finito o unito, approvazione, ripresa, timer di sicurezza) decide quali task far partire: dipendenze unite, modalità, `parallelTasks`, budget. Crea i run `mission-task`. |
+| `MissionScheduler` | A ogni evento rilevante (task finito o unito, azione dell'utente, ripresa, timer di sicurezza ogni 30 s) decide quali task far partire: dipendenze unite, modalità, `parallelTasks`, budget. Crea i run `mission-task` e le righe `MissionTask` alla transizione a `running`. |
+| `GraphEngine` (`runs/graph-engine.ts`) | Il motore a grafo condiviso con i workflow: passi pronti, approvazioni, `repeat`, verdetti, ripresa. Le estensioni dei task (passo `run`, verifica composta, `repeat.stop`, checkpoint) sono nella porta `StepPort`. |
 | `TaskGraphFactory` | Dal modello di task, dal task e dal team costruisce il grafo del run (§6): risolve i ruoli e compila `{{task}}`. |
 | `GitService` | Branch, worktree, commit, merge, push. Usa `git` con argomenti in array, mai una stringa di shell. |
 | `ChecksService` | Esegue i comandi del piano in un worktree, dentro il sandbox (§8.2). |
@@ -535,10 +539,14 @@ approvato, decisioni registrate, report dei task chiusi e stato dei controlli.
 - **Partenza di un task**: branch `mission/<id>/<key>` dalla punta attuale del branch della
   missione e worktree in `.../<missionId>/<key>`. Il `cwd` degli agenti è il worktree: la
   confinazione di `pathViolation` resta la stessa.
-- **Chiusura di un task**: commit con messaggio dal titolo del task e trailer
-  `Mission: <id>`, `Task: <key>`. Ogni comando git del backend gira con
-  `-c core.hooksPath=/dev/null`, fuori dal sandbox: gli hook del repository (husky e simili)
-  eseguirebbero codice del worktree senza isolamento.
+- **Checkpoint**: dopo ogni passo che scrive, un commit `checkpoint: <step> #<iterazione>`
+  senza trailer, salvato in `StepResult.checkpoint`. `protect` confronta il worktree con il
+  checkpoint del passo protetto: i file cambiati da lì in poi sono violazioni.
+- **Chiusura di un task**: `git reset --soft <taskBase>` e un solo commit con messaggio dal
+  titolo del task e trailer `Mission: <id>`, `Task: <key>` (i checkpoint si comprimono). Sul
+  branch della missione arriva un commit per task, più il merge. Ogni comando git del backend
+  gira con `-c core.hooksPath=/dev/null`, fuori dal sandbox: gli hook del repository (husky e
+  simili) eseguirebbero codice del worktree senza isolamento.
 - **Unione**: `git merge --no-ff` nel worktree della missione.
   - In caso di conflitto, il backend lascia i file in conflitto e chiama l'**integratore** con i
     due diff e i criteri dei task coinvolti. Poi rifà i controlli completi.

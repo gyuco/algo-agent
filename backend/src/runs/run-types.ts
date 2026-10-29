@@ -1,5 +1,6 @@
 import type { Run } from '../generated/prisma/client.js';
 import type { CheckName } from '../missions/checks.service.js';
+import type { ScopeViolation } from '../missions/scope.service.js';
 import type { ChatEvent } from '../providers/provider.js';
 import type { StepStatus } from './run-steps.js';
 
@@ -52,6 +53,20 @@ export type RunEventData =
       writes: boolean;
     }
   | { type: 'check_output'; name: CheckName; text: string }
+  | {
+      type: 'commands_finished';
+      id: string;
+      ok: boolean;
+      results: {
+        name: string;
+        ok: boolean;
+        exitCode: number | null;
+        timedOut: boolean;
+        durationMs: number;
+      }[];
+    }
+  | { type: 'protect_violation'; id: string; files: string[] }
+  | { type: 'scope_violation'; id: string; violations: ScopeViolation[] }
   | {
       type: 'prepare_step';
       step: PrepareStep;

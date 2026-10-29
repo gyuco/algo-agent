@@ -84,6 +84,10 @@ function service(initial: Mission) {
       findMany: async () => [{ id: 55, status: 'running' }],
       count: async () => 0,
     },
+    missionTask: {
+      findMany: async () => [],
+      deleteMany: async () => ({ count: 0 }),
+    },
     missionEntry: {
       create: async ({
         data,
@@ -179,6 +183,14 @@ describe('MissionsService.approve', () => {
     await expect(
       missions.approve(1, 7, { planVersion: 1, mode: 'step' }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('refuses automatic mode until the budget arrives', async () => {
+    const { missions, state } = service(mission());
+    await expect(
+      missions.approve(1, 7, { planVersion: 1, mode: 'auto' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(state.status).toBe('planned');
   });
 
   it('refuses a mission that does not wait for an approval', async () => {

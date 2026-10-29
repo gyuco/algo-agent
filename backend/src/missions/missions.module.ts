@@ -9,6 +9,9 @@ import { GitService } from './git-service.js';
 import { MissionEventBus } from './mission-event-bus.js';
 import { MissionOrchestratorHandler } from './mission-orchestrator.handler.js';
 import { MissionPrepareHandler } from './mission-prepare.handler.js';
+import { MissionScheduler } from './mission-scheduler.service.js';
+import { MissionTaskHandler } from './mission-task.handler.js';
+import { MissionTasksService } from './mission-tasks.service.js';
 import { MissionTools } from './mission-tools.js';
 import {
   MissionsController,
@@ -19,8 +22,9 @@ import { PlanValidationService } from './plan-validation.js';
 import { MacSandbox, Sandbox } from './sandbox.js';
 import { SystemController } from './sandbox.controller.js';
 import { ScopeService } from './scope.service.js';
+import { TaskGraphFactory } from './task-graph.factory.js';
 
-/** Missions: briefing, plan validation, approval and the mission log. */
+/** Missions: briefing, plan validation, approval, tasks and the mission log. */
 @Module({
   imports: [
     AgentsModule,
@@ -40,6 +44,10 @@ import { ScopeService } from './scope.service.js';
     PlanValidationService,
     MissionOrchestratorHandler,
     MissionPrepareHandler,
+    MissionTaskHandler,
+    MissionScheduler,
+    MissionTasksService,
+    TaskGraphFactory,
     MissionsService,
     GitService,
     ChecksService,

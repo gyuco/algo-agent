@@ -6,6 +6,7 @@ const limits: RunLimits = {
   chatsPerUser: 3,
   writersPerProject: 1,
   queuedPerUser: 20,
+  missionTasks: 6,
 };
 
 const chat = (projectId = 1, userId = 1) => ({

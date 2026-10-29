@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
+import { missionsApi, type Mission } from '../missions/api'
 import { runsApi, type Run } from './api'
 import { reasonText } from './reason'
 import { needsUser, runLink, STATUS_KEY, type ActiveRunsState } from './useActiveRuns'
@@ -25,12 +26,25 @@ export function ActivityPage({ state }: { state: ActiveRunsState }) {
     typeof Notification === 'undefined' ? 'denied' : Notification.permission,
   )
   const [error, setError] = useState<string | null>(null)
+  /** Missions waiting for the user, with the task that asks. */
+  const [missions, setMissions] = useState<Mission[]>([])
   // Running durations move on their own.
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 5000)
     return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    let alive = true
+    void missionsApi
+      .list({ status: 'waiting' })
+      .then((list) => alive && setMissions(list))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [state.runs])
 
   async function act(action: () => Promise<unknown>) {
     setError(null)
@@ -70,8 +84,41 @@ export function ActivityPage({ state }: { state: ActiveRunsState }) {
           {error}
         </p>
       )}
+      {missions.length > 0 && (
+        <section className="activity-group">
+          <h2>{t('activity.missions')}</h2>
+          <ul className="activity-list">
+            {missions.map((mission) => {
+              const task = mission.tasks?.find((t) => t.id === mission.wait?.taskId)
+              return (
+                <li key={mission.id} className="activity-item unread">
+                  <div className="activity-main">
+                    <span className="activity-title">
+                      <span className="badge accent">{t('activity.mission')}</span> {mission.title}
+                    </span>
+                    <small>
+                      {mission.wait?.code === 'task_review'
+                        ? t('activity.missionReview', { key: task?.key ?? '—' })
+                        : mission.wait?.code === 'task_blocked'
+                          ? t('activity.missionBlocked', { key: task?.key ?? '—' })
+                          : mission.wait?.code === 'final_checks'
+                            ? t('activity.missionFinal')
+                            : mission.wait?.code ?? '—'}
+                    </small>
+                  </div>
+                  <div className="row">
+                    <a className="button secondary" href={`#/workspace/${mission.projectId}/mission/${mission.id}`}>
+                      {t('activity.open')}
+                    </a>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
       {!state.loaded && <p className="hint">{t('activity.loading')}</p>}
-      {state.loaded && groups.length === 0 && <p className="hint">{t('activity.empty')}</p>}
+      {state.loaded && groups.length === 0 && missions.length === 0 && <p className="hint">{t('activity.empty')}</p>}
       {groups.map((g) => (
         <section key={g.title} className="activity-group">
           <h2>{t(g.title)}</h2>

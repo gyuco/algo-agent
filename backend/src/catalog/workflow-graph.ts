@@ -219,9 +219,10 @@ export function graphErrors(steps: GraphStep[]): string[] {
 }
 
 /**
- * The step's prompt with its variables: `{{input}}` the user's text,
- * `{{steps.<id>}}` that step's output, `{{previous}}` the output of its only
- * dependency, `{{iteration}}` the round of a repeat, from 1.
+ * The step's prompt with its variables: `{{input}}` the user's text (or
+ * `{{task}}` in a task model), `{{steps.<id>}}` that step's output,
+ * `{{previous}}` the output of its only dependency, `{{iteration}}` the round
+ * of a repeat, from 1.
  */
 export function fillPrompt(
   step: GraphStep,
@@ -233,6 +234,7 @@ export function fillPrompt(
   return step.prompt
     .replace(STEP_REF, (_, id: string) => outputs[id] ?? '')
     .replaceAll('{{input}}', input)
+    .replaceAll('{{task}}', input)
     .replaceAll('{{previous}}', previous ?? '')
     .replaceAll('{{iteration}}', String(iteration ?? ''));
 }

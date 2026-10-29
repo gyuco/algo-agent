@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/useI18n'
-import { MISSION_STATUS_KEY, missionsApi } from './api'
+import { MISSION_STATUS_KEY, missionsApi, type MissionTask } from './api'
 import { BaselineWait } from './BaselineWait'
 import { BriefingView } from './BriefingView'
 import { PlanView } from './PlanView'
 import { PreparationView } from './PreparationView'
+import { TaskBlockedWait } from './TaskBlockedWait'
+import { TaskList } from './TaskList'
+import { TaskReviewWait } from './TaskReviewWait'
+import { TaskView } from './TaskView'
 import { useMissionEvents } from './useMissionEvents'
 
 interface Props {
@@ -13,11 +17,29 @@ interface Props {
   onDeleted: () => void
 }
 
-/** One mission: the briefing on the left, the plan or what is running on the right. */
+/** One mission: the task list or the briefing on the left, what is running or waiting on the right. */
 export function MissionView({ missionId, onBack, onDeleted }: Props) {
   const { t } = useI18n()
   const { mission, entries, error, loading, refresh } = useMissionEvents(missionId)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [tab, setTab] = useState<'tasks' | 'briefing'>('tasks')
+
+  const waitingTask: MissionTask | undefined =
+    mission?.tasks?.find((task) => task.id === mission.wait?.taskId) ??
+    mission?.tasks?.find((task) => task.key === selected)
+
+  // A mission that asks something opens that task; the first one is shown otherwise.
+  useEffect(() => {
+    if (!mission) return
+    const asked = mission.tasks?.find((task) => task.id === mission.wait?.taskId)
+    if (asked) {
+      setSelected(asked.key)
+      setTab('tasks')
+      return
+    }
+    if (!selected && mission.tasks?.length) setSelected(mission.tasks[0].key)
+  }, [mission, selected])
 
   async function abort() {
     if (!mission) return
@@ -43,6 +65,17 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
     }
   }
 
+  async function retryFinal() {
+    if (!mission) return
+    setActionError(null)
+    try {
+      await missionsApi.retryFinalChecks(mission.id)
+      await refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : t('error.unexpected'))
+    }
+  }
+
   const setError = (message: string) => setActionError(message)
 
   if (error) {
@@ -60,6 +93,8 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
   if (loading || !mission) return <p className="hint">{t('missions.loading')}</p>
 
   const baseline = mission.status === 'waiting' && mission.wait?.code === 'baseline'
+  const withTasks = ['running', 'waiting', 'done'].includes(mission.status)
+  const wait = mission.wait
 
   return (
     <div className="mission-view">
@@ -73,7 +108,7 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
         </span>
         <span className="hint">{t('missions.planVersionShort', { n: String(mission.planVersion) })}</span>
         <div className="row">
-          {mission.status !== 'aborted' && (
+          {mission.status !== 'aborted' && mission.status !== 'done' && (
             <button type="button" className="danger" onClick={() => void abort()}>
               {t('missions.abort')}
             </button>
@@ -91,47 +126,71 @@ export function MissionView({ missionId, onBack, onDeleted }: Props) {
         </p>
       )}
       <div className="mission-columns">
-        <BriefingView mission={mission} entries={entries} onChanged={refresh} />
+        {withTasks ? (
+          <div className="mission-left">
+            <div className="row tabs">
+              <button type="button" className={tab === 'tasks' ? '' : 'secondary'} onClick={() => setTab('tasks')}>
+                {t('missions.tasks')}
+              </button>
+              <button
+                type="button"
+                className={tab === 'briefing' ? '' : 'secondary'}
+                onClick={() => setTab('briefing')}
+              >
+                {t('missions.briefing')}
+              </button>
+            </div>
+            {tab === 'tasks' ? (
+              <TaskList mission={mission} selected={selected} onSelect={setSelected} />
+            ) : (
+              <BriefingView mission={mission} entries={entries} onChanged={refresh} />
+            )}
+          </div>
+        ) : (
+          <BriefingView mission={mission} entries={entries} onChanged={refresh} />
+        )}
         <div className="mission-right">
-          {mission.status === 'planned' && (
-            <PlanView mission={mission} onChanged={refresh} />
-          )}
+          {mission.status === 'planned' && <PlanView mission={mission} onChanged={refresh} />}
           {mission.status === 'approved' && (
             <PreparationView mission={mission} onChanged={refresh} onError={setError} />
           )}
           {baseline && (
-            <BaselineWait
-              mission={mission}
-              entries={entries}
-              onChanged={refresh}
+            <BaselineWait mission={mission} entries={entries} onChanged={refresh} onError={setError} />
+          )}
+          {wait?.code === 'task_review' && waitingTask && (
+            <TaskReviewWait mission={mission} task={waitingTask} onChanged={refresh} onError={setError} />
+          )}
+          {wait?.code === 'task_blocked' && waitingTask && (
+            <TaskBlockedWait mission={mission} task={waitingTask} onChanged={refresh} onError={setError} />
+          )}
+          {wait?.code === 'final_checks' && (
+            <section className="card">
+              <h2>{t('missions.wait.finalTitle')}</h2>
+              <p className="error" role="alert">
+                {wait.detail}
+              </p>
+              <div className="row end">
+                <button type="button" onClick={() => void retryFinal()}>
+                  {t('missions.wait.retry')}
+                </button>
+              </div>
+            </section>
+          )}
+          {mission.status === 'done' && (
+            <section className="card mission-ready">
+              <h2>{t('missions.done.title')}</h2>
+              <p>
+                {t('missions.done.branch')} <code>{mission.branch ?? '—'}</code>
+              </p>
+              <p className="hint">{t('missions.done.hint')}</p>
+            </section>
+          )}
+          {withTasks && selected && (
+            <TaskView
+              missionId={mission.id}
+              taskKey={selected}
               onError={setError}
             />
-          )}
-          {mission.status === 'running' && (
-            <section className="card mission-ready">
-              <h2>{t('missions.ready')}</h2>
-              <dl className="plan-facts">
-                <dt>{t('missions.branch')}</dt>
-                <dd>
-                  <code>{mission.branch ?? '—'}</code>
-                </dd>
-                <dt>{t('missions.worktree')}</dt>
-                <dd>
-                  <code>{mission.worktreePath ?? '—'}</code>
-                </dd>
-                <dt>{t('missions.baseCommit')}</dt>
-                <dd>
-                  <code>{mission.baseCommit?.slice(0, 12) ?? '—'}</code>
-                </dd>
-              </dl>
-              <p className="hint">{t('missions.readyHint')}</p>
-            </section>
-          )}
-          {mission.status === 'waiting' && !baseline && (
-            <section className="card">
-              <h2>{t('missions.waiting')}</h2>
-              <p className="hint">{mission.wait?.code ?? '—'}</p>
-            </section>
           )}
           {mission.status === 'aborted' && (
             <section className="card">

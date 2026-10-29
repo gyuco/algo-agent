@@ -422,6 +422,53 @@ export class GitService {
     return entries;
   }
 
+  /** The files changed between two commits. */
+  async changedBetween(cwd: string, from: string, to: string) {
+    const out = await this.run(
+      cwd,
+      ['diff', '--name-only', '-z', from, to],
+      this.gitTimeout(),
+    );
+    return out.split('\0').filter(Boolean);
+  }
+
+  /** A unified diff between two commits, or the worktree and `from`; capped. */
+  async diffText(cwd: string, from: string, to?: string, maxBytes = 1_048_576) {
+    const out = await this.run(
+      cwd,
+      ['diff', '--no-color', ...(to ? [from, to] : [from])],
+      this.gitTimeout(),
+    );
+    return Buffer.byteLength(out) <= maxBytes
+      ? out
+      : Buffer.from(out).subarray(0, maxBytes).toString('utf8');
+  }
+
+  /** Added and removed lines per file against `base`. */
+  async numstat(cwd: string, base: string) {
+    const out = await this.run(
+      cwd,
+      ['diff', '--numstat', '-z', base],
+      this.gitTimeout(),
+    );
+    const files = new Map<string, { added: number; removed: number }>();
+    for (const part of out.split('\0')) {
+      if (!part.trim()) continue;
+      const [added, removed, file] = part.split('\t');
+      if (!file) continue;
+      files.set(file, {
+        added: Number(added) || 0,
+        removed: Number(removed) || 0,
+      });
+    }
+    return files;
+  }
+
+  /** Moves the branch back to `commit`, keeping the worktree's files staged. */
+  async resetSoft(dir: string, commit: string) {
+    await this.run(dir, ['reset', '--soft', commit], this.gitTimeout());
+  }
+
   /** A file as it was at `rev`; null when it didn't exist. */
   async showFile(
     dir: string,
@@ -513,10 +560,12 @@ export class GitService {
   }
 
   /** `merge --no-ff`; a conflict throws, and `conflicts` lists the files. */
-  async merge(dir: string, branch: string) {
+  async merge(dir: string, branch: string, message?: string) {
     await this.run(
       dir,
-      ['merge', '--no-ff', '--no-edit', branch],
+      message
+        ? ['merge', '--no-ff', '-m', message, branch]
+        : ['merge', '--no-ff', '--no-edit', branch],
       this.gitTimeout(),
     );
   }

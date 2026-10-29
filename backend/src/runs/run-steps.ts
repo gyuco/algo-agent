@@ -1,3 +1,5 @@
+import type { CommandOutcome } from './graph-engine.js';
+
 export type StepStatus =
   | 'pending'
   | 'waiting_approval'
@@ -27,6 +29,14 @@ export interface StepResult {
   verdict?: string;
   /** A step that repeats: each round so far, the step then its check. */
   iterations?: Iteration[];
+  /** A step with `run`: the commands' outcome, output included. */
+  commands?: CommandOutcome;
+  /** A verification: its verdict and the text it was given. */
+  review?: { verdict: string; output: string };
+  /** The commit of the checkpoint after a writing step. */
+  checkpoint?: string;
+  /** The verdict of a repeat's check that stopped the block. */
+  stopVerdict?: string;
   /** Something to know about how it ended, e.g. a repeat that ran out of rounds. */
   warning?: string;
 }

@@ -21,8 +21,9 @@ import {
 } from './checks.service.js';
 import { GitService } from './git-service.js';
 import { missionBranchName, missionWorktreePath } from './mission-paths.js';
+import { MissionScheduler } from './mission-scheduler.service.js';
 import { MissionsService } from './missions.service.js';
-import { planSchema } from './plan-schema.js';
+import { planSchema, planTasks } from './plan-schema.js';
 
 const BASE_CHECKS: CheckName[] = ['build', 'lint', 'test'];
 const DETAIL_LINES = 5;
@@ -77,6 +78,7 @@ export class MissionPrepareHandler implements RunHandler, OnModuleInit {
     private readonly config: RunConfig,
     private readonly vault: VaultService,
     private readonly missions: MissionsService,
+    private readonly scheduler: MissionScheduler,
     private readonly handlers: RunHandlers,
   ) {}
 
@@ -273,13 +275,27 @@ export class MissionPrepareHandler implements RunHandler, OnModuleInit {
     }
     if (signal.aborted) return 'done';
 
-    // 4. ready
-    const { count } = await this.prisma.mission.updateMany({
-      where: { id: mission.id, userId: mission.userId, status: 'approved' },
-      data: { status: 'running', waitJson: null },
+    // 4. ready, with the rows of the plan's tasks, in the same transaction
+    const { count } = await this.prisma.$transaction(async (tx) => {
+      const moved = await tx.mission.updateMany({
+        where: { id: mission.id, userId: mission.userId, status: 'approved' },
+        data: { status: 'running', waitJson: null },
+      });
+      if (!moved.count) return moved;
+      await tx.missionTask.createMany({
+        data: planTasks(approved).map((task) => ({
+          missionId: mission.id,
+          key: task.key,
+          milestone: task.milestone,
+          status: 'pending',
+        })),
+      });
+      return moved;
     });
-    if (count)
+    if (count) {
       await this.missions.record(mission.id, 'status', { status: 'running' });
+      this.scheduler.wake(mission.id);
+    }
     return 'done';
   }
 

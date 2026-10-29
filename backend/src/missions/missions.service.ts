@@ -38,7 +38,10 @@ import {
   missionBranchName,
   missionWorktreePath,
   setupMarker,
+  taskBranchName,
+  taskWorktreePath,
 } from './mission-paths.js';
+import { taskView } from './mission-task.handler.js';
 import {
   briefingMessage,
   orchestratorSystemPrompt,
@@ -196,7 +199,32 @@ export class MissionsService
     return {
       ...view,
       preparation: preparation ? { runId: preparation.id } : null,
+      tasks: view.plan ? await this.taskViews(id, view.plan) : [],
     };
+  }
+
+  private async taskViews(missionId: number, plan: Plan) {
+    const rows = await this.prisma.missionTask.findMany({
+      where: { missionId },
+    });
+    const byKey = new Map(rows.map((t) => [t.key, t]));
+    const tasks = [];
+    for (const milestone of plan.milestones) {
+      for (const planned of milestone.tasks) {
+        const row = byKey.get(planned.key);
+        if (!row) continue;
+        const waitingOn = planned.needs.filter((need) => {
+          const status = byKey.get(need)?.status;
+          return status !== 'done' && status !== 'skipped';
+        });
+        tasks.push({
+          ...taskView(row, plan, waitingOn),
+          milestone: milestone.id,
+          title: planned.title ?? planned.key,
+        });
+      }
+    }
+    return tasks;
   }
 
   private async withValidation(userId: number, mission: Mission) {
@@ -534,6 +562,11 @@ export class MissionsService
     if (mission.status !== 'planned') {
       throw new ConflictException("La missione non aspetta un'approvazione");
     }
+    if (dto.mode === 'auto') {
+      throw new ConflictException(
+        'La modalità automatica arriva con il budget: approva in passo-passo',
+      );
+    }
     if (mission.planVersion !== dto.planVersion) {
       throw new ConflictException('Il piano è cambiato: ricarica e riprova');
     }
@@ -736,6 +769,8 @@ export class MissionsService
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     await this.cleanupWorkspace(mission);
+    // The tasks belong to the plan being revised.
+    await this.prisma.missionTask.deleteMany({ where: { missionId: id } });
     await this.entry(id, 'status', { status: 'briefing' });
     return this.get(userId, id);
   }
@@ -749,6 +784,24 @@ export class MissionsService
       missionWorktreePath(dataDir, mission.projectId, mission.id);
     const branch =
       mission.branch ?? missionBranchName(mission.id, mission.title);
+    const tasks = await this.prisma.missionTask.findMany({
+      where: { missionId: mission.id },
+    });
+    for (const task of tasks) {
+      const taskWorktree =
+        task.worktreePath ??
+        taskWorktreePath(dataDir, mission.projectId, mission.id, task.key);
+      await this.git
+        .removeWorktree(project.path, taskWorktree)
+        .catch(() => undefined);
+      await this.git
+        .deleteBranch(
+          project.path,
+          task.branch ?? taskBranchName(mission.id, task.key),
+        )
+        .catch(() => undefined);
+      await rm(setupMarker(taskWorktree), { force: true }).catch(() => undefined);
+    }
     await this.git
       .removeWorktree(project.path, worktree)
       .catch(() => undefined);
@@ -766,6 +819,14 @@ export class MissionsService
     const { count } = await this.prisma.mission.updateMany({
       where: { id, userId, status: { not: 'aborted' } },
       data: { status: 'aborted', waitJson: null, finishedAt: new Date() },
+    });
+    // A task running while the mission is stopped ends with it; its worktree stays.
+    await this.prisma.missionTask.updateMany({
+      where: {
+        missionId: id,
+        status: { in: ['running', 'review', 'merging'] },
+      },
+      data: { status: 'aborted', finishedAt: new Date() },
     });
     if (count) await this.entry(id, 'status', { status: 'aborted' });
     return this.get(userId, id);

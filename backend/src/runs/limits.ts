@@ -8,6 +8,8 @@ export interface RunLimits {
   /** Workflows that may write executing in one project. */
   writersPerProject: number;
   queuedPerUser: number;
+  /** Mission tasks running at once in the instance. */
+  missionTasks: number;
 }
 
 /** What the scheduler needs to know about a run. */
@@ -46,6 +48,13 @@ export function blockedBy(
     mine.filter((r) => r.kind === run.kind).length >= perUser
   ) {
     return { code: 'user' };
+  }
+  if (
+    run.kind === 'mission-task' &&
+    running.filter((r) => r.kind === 'mission-task').length >=
+      limits.missionTasks
+  ) {
+    return { code: 'instance' };
   }
   const writer = (r: RunSlot) => r.kind === 'workflow' && r.writes;
   if (

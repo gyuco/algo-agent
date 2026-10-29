@@ -26,7 +26,7 @@ type Dependencies = Partial<
 const GLOB_MAGIC = /[*?[\]{}()!+@]/;
 
 /** A `scope.paths` entry matches itself and everything below it. */
-function matches(file: string, patterns: string[]) {
+export function matches(file: string, patterns: string[]) {
   return patterns.some((pattern) => {
     if (GLOB_MAGIC.test(pattern))
       return picomatch(pattern, { dot: true })(file);

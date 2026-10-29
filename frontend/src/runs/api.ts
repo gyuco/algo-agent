@@ -53,6 +53,25 @@ export interface StepResult {
   verdict?: string
   /** A step that repeats: each round so far, the step then its check. */
   iterations?: { output: string; verdict?: string; costUsd: number; check: { output: string; verdict: string; costUsd: number } }[]
+  /** A step with run: the commands' outcome. */
+  commands?: {
+    ok: boolean
+    results: {
+      name: MissionCheckName
+      argv: string[]
+      ok: boolean
+      exitCode: number | null
+      timedOut: boolean
+      durationMs: number
+      output: string
+    }[]
+  }
+  /** A verification: its verdict and the text it was given. */
+  review?: { verdict: string; output: string }
+  /** The commit of the checkpoint after a writing step. */
+  checkpoint?: string
+  /** The verdict of a repeat's check that stopped the block. */
+  stopVerdict?: string
   warning?: string
 }
 
@@ -105,6 +124,14 @@ export type RunEvent =
     }
   /** Live output of a preparation command, already masked. */
   | { type: 'check_output'; name: MissionCheckName; text: string }
+  | {
+      type: 'commands_finished'
+      id: string
+      ok: boolean
+      results: { name: string; ok: boolean; exitCode: number | null; timedOut: boolean; durationMs: number }[]
+    }
+  | { type: 'protect_violation'; id: string; files: string[] }
+  | { type: 'scope_violation'; id: string; violations: { kind: string; file: string; name?: string }[] }
   | { type: 'finished'; status: RunStatus }
 
 /** What the user's activity stream sends. */

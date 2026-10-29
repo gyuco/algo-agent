@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Headers,
   HttpCode,
   HttpStatus,
@@ -16,6 +17,8 @@ import {
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard.js';
 import { streamEvents } from '../common/sse.js';
+import { MissionScheduler } from './mission-scheduler.service.js';
+import { MissionTasksService } from './mission-tasks.service.js';
 import { MissionsService } from './missions.service.js';
 import {
   ApproveMissionDto,
@@ -23,6 +26,7 @@ import {
   MissionEventsQueryDto,
   MissionMessageDto,
   MissionsQueryDto,
+  RedoTaskDto,
 } from './dto/mission.dto.js';
 
 /** Starts a mission in one of the user's projects. */
@@ -43,7 +47,11 @@ export class ProjectMissionsController {
 /** The user's missions: read, follow, comment, approve. */
 @Controller('missions')
 export class MissionsController {
-  constructor(private readonly missions: MissionsService) {}
+  constructor(
+    private readonly missions: MissionsService,
+    private readonly tasks: MissionTasksService,
+    private readonly scheduler: MissionScheduler,
+  ) {}
 
   @Get()
   list(@Req() req: AuthenticatedRequest, @Query() query: MissionsQueryDto) {
@@ -53,6 +61,73 @@ export class MissionsController {
   @Get(':id')
   get(@Req() req: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number) {
     return this.missions.get(req.user.sub, id);
+  }
+
+  @Get(':id/tasks')
+  taskList(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tasks.list(req.user.sub, id);
+  }
+
+  @Get(':id/tasks/:key')
+  task(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('key') key: string,
+  ) {
+    return this.tasks.get(req.user.sub, id, key);
+  }
+
+  @Get(':id/tasks/:key/diff')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  taskDiff(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('key') key: string,
+  ) {
+    return this.tasks.diff(req.user.sub, id, key);
+  }
+
+  @Post(':id/tasks/:key/ok')
+  @HttpCode(HttpStatus.OK)
+  taskOk(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('key') key: string,
+  ) {
+    return this.tasks.ok(req.user.sub, id, key);
+  }
+
+  @Post(':id/tasks/:key/redo')
+  @HttpCode(HttpStatus.OK)
+  taskRedo(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('key') key: string,
+    @Body() dto: RedoTaskDto,
+  ) {
+    return this.tasks.redo(req.user.sub, id, key, dto.note);
+  }
+
+  @Post(':id/tasks/:key/skip')
+  @HttpCode(HttpStatus.OK)
+  taskSkip(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('key') key: string,
+  ) {
+    return this.tasks.skip(req.user.sub, id, key);
+  }
+
+  @Post(':id/final-checks/retry')
+  @HttpCode(HttpStatus.OK)
+  retryFinalChecks(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tasks.retryFinalChecks(req.user.sub, id);
   }
 
   @Get(':id/entries')
@@ -126,7 +201,7 @@ export class MissionsController {
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.missions.abort(req.user.sub, id);
+    return this.scheduler.withLock(id, () => this.missions.abort(req.user.sub, id));
   }
 
   @Delete(':id')

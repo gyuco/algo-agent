@@ -1,5 +1,6 @@
-/** Markdown an agent may wrap the verdict line in. */
-const DECORATION = /[*_`]/g;
+/** Markdown an agent may wrap the line in; underscores inside a value are part of it. */
+const DECORATION = /[*`]/g;
+const EDGES = /^[\s*_]+|[\s*_]+$/g;
 const VERDICT_LINE = /^\s*VERDETTO\s*:(.*)$/i;
 
 /** Appended to the prompt of a step that declares verdicts. */
@@ -17,13 +18,18 @@ export const verdictReminder = (values: string[]) =>
  */
 export function parseVerdict(output: string, values: string[]) {
   const lines = output.split('\n');
-  const at = lines.findLastIndex((line) =>
-    VERDICT_LINE.test(line.replace(DECORATION, '')),
-  );
+  const clean = (line: string) =>
+    line
+      .replace(DECORATION, '')
+      .replace(/_+VERDETTO_+/gi, 'VERDETTO')
+      .replace(EDGES, '');
+  const at = lines.findLastIndex((line) => VERDICT_LINE.test(clean(line)));
   if (at < 0) return { verdict: null, text: output };
-  const value = VERDICT_LINE.exec(lines[at].replace(DECORATION, ''))![1]
+  const value = VERDICT_LINE.exec(clean(lines[at]))![1]
     .trim()
     .replace(/[.!]$/, '')
+    .replace(/^[*_]+|[*_]+$/g, '')
+    .trim()
     .toLowerCase();
   const text = lines
     .filter((_, i) => i !== at)

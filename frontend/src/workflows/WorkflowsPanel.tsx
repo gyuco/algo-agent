@@ -4,6 +4,7 @@ import { LOCALES } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 import { isActive, runsApi, type Run, type RunStatus, type StepStatus } from '../runs/api'
 import { reasonText } from '../runs/reason'
+import { RunSteps } from '../runs/RunSteps'
 import { STATUS_KEY, type ActiveRunsState } from '../runs/useActiveRuns'
 import { workflowsApi, type WorkflowRun } from './api'
 
@@ -262,42 +263,24 @@ export function WorkflowsPanel({ projectId, workflows, onUsage, runs: live, open
           </h3>
           {status === 'queued' && <p className="hint">{reasonText(current?.reason ?? null, t, language)}</p>}
           {status === 'interrupted' && <p className="hint">{t('run.interruptedByBackend')}</p>}
-          <ol className="run-steps">
-            {steps.map((s, i) => (
-              <li key={i}>
-                <strong>
-                  {s.id} · {s.agent}
-                </strong>
-                {s.round && <small className="hint"> · {t('workflows.round', { n: String(s.round.n), max: String(s.round.max) })}</small>}
-                {s.status === 'waiting_approval' && s.approval && followed !== null && (
-                  <Approval
-                    approval={s.approval}
-                    busy={running === false}
-                    onApprove={() =>
-                      void act(async () => {
-                        await runsApi.approve(followed, s.id)
-                        upsert(s.id, s.agent, (step) => ({ ...step, status: 'pending', approval: undefined }))
-                      })
-                    }
-                    onReject={(note) => void act(() => runsApi.reject(followed, s.id, note))}
-                  />
-                )}
-                {s.tools.length > 0 && (
-                  <ul className="tools">
-                    {s.tools.map((tool, j) => (
-                      <li key={j}>{tool}</li>
-                    ))}
-                  </ul>
-                )}
-                {s.text && <div className="bubble">{s.text}</div>}
-                {s.error && (
-                  <p className="error" role="alert">
-                    {s.error}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ol>
+          <RunSteps
+            steps={steps}
+            renderExtra={(s) =>
+              s.status === 'waiting_approval' && s.approval && followed !== null ? (
+                <Approval
+                  approval={s.approval}
+                  busy={running === false}
+                  onApprove={() =>
+                    void act(async () => {
+                      await runsApi.approve(followed, s.id)
+                      upsert(s.id, s.agent, (step) => ({ ...step, status: 'pending', approval: undefined }))
+                    })
+                  }
+                  onReject={(note) => void act(() => runsApi.reject(followed, s.id, note))}
+                />
+              ) : null
+            }
+          />
         </section>
       )}
 
