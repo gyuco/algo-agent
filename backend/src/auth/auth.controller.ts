@@ -5,12 +5,15 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
+  Patch,
   Post,
   Req,
 } from '@nestjs/common';
 import { UsersService } from '../users/users.service.js';
 import { AuthService } from './auth.service.js';
+import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { CredentialsDto } from './dto/credentials.dto.js';
+import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import type { AuthenticatedRequest } from './jwt-auth.guard.js';
 import { Public } from './public.decorator.js';
 
@@ -45,5 +48,19 @@ export class AuthController {
     const user = await this.users.findPublicById(req.user.sub);
     if (!user) throw new NotFoundException();
     return user;
+  }
+
+  @Patch('me')
+  update(@Req() req: AuthenticatedRequest, @Body() dto: UpdateProfileDto) {
+    return this.auth.updateProfile(req.user.sub, dto);
+  }
+
+  @Patch('me/password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async changePassword(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.auth.changePassword(req.user.sub, dto);
   }
 }

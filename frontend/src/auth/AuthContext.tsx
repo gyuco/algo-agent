@@ -6,7 +6,13 @@ import {
   type ReactNode,
 } from 'react'
 import { api, tokenStore } from '../api/client'
-import { AuthContext, type AuthResponse, type AuthState, type User } from './context'
+import {
+  AuthContext,
+  type AuthResponse,
+  type AuthState,
+  type ProfileUpdate,
+  type User,
+} from './context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -32,6 +38,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  const updateProfile = useCallback(async (data: ProfileUpdate) => {
+    const res = await api<AuthResponse>('/auth/me', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+    // The email is part of the token payload: swap it for the freshly issued one.
+    tokenStore.set(res.accessToken)
+    setUser(res.user)
+    return res.user
+  }, [])
+
+  const changePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      await api<null>('/auth/me/password', {
+        method: 'PATCH',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+    },
+    [],
+  )
+
   const value = useMemo<AuthState>(
     () => ({
       user,
@@ -43,8 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tokenStore.clear()
         setUser(null)
       },
+      updateProfile,
+      changePassword,
     }),
-    [user, loading, authenticate],
+    [user, loading, authenticate, updateProfile, changePassword],
   )
 
   return <AuthContext value={value}>{children}</AuthContext>

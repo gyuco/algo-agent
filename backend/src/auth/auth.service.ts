@@ -1,14 +1,18 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
 import { PublicUser, UsersService } from '../users/users.service.js';
+import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { CredentialsDto } from './dto/credentials.dto.js';
+import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import { JwtPayload } from './jwt-auth.guard.js';
 
 const BCRYPT_ROUNDS = 12;
@@ -57,8 +61,48 @@ export class AuthService {
     return this.issueToken({
       id: user.id,
       email: user.email,
+      name: user.name,
       createdAt: user.createdAt,
     });
+  }
+
+  /** Changes the editable account fields and reissues the token with the new email. */
+  async updateProfile(
+    userId: number,
+    { email, name }: UpdateProfileDto,
+  ): Promise<AuthResponse> {
+    if (email) {
+      const owner = await this.users.findByEmail(email);
+      if (owner && owner.id !== userId) {
+        throw new ConflictException('Email already registered');
+      }
+    }
+    const user = await this.users.updateProfile(userId, {
+      ...(email !== undefined && { email }),
+      ...(name !== undefined && { name: name.length > 0 ? name : null }),
+    });
+    return this.issueToken(user);
+  }
+
+  async changePassword(
+    userId: number,
+    { currentPassword, newPassword }: ChangePasswordDto,
+  ): Promise<void> {
+    const user = await this.users.findById(userId);
+    if (!user) throw new NotFoundException();
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException(
+        'The new password must be different from the current one',
+      );
+    }
+    await this.users.updatePassword(
+      userId,
+      await bcrypt.hash(newPassword, BCRYPT_ROUNDS),
+    );
   }
 
   private async issueToken(user: PublicUser): Promise<AuthResponse> {

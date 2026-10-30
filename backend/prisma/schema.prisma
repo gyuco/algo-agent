@@ -11,6 +11,8 @@ datasource db {
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
+  /// Display name shown in the profile; null falls back to the email local part.
+  name         String?
   passwordHash String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
