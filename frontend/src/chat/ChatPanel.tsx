@@ -21,6 +21,7 @@ import { STATUS_KEY, type ActiveRunsState } from "../runs/useActiveRuns";
 import { workflowsApi } from "../workflows/api";
 import { WorkflowRunCard } from "../workflows/WorkflowRunCard";
 import { assignOf, type Team } from "../workflows/team";
+import { WorkflowMenu } from "../workflows/WorkflowMenu";
 import { WorkflowTeam } from "../workflows/WorkflowTeam";
 import {
   chatApi,
@@ -740,7 +741,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
             {t("missions.transform")}
           </button>
         )}
-        {tools && <div className="chat-tools">{tools}</div>}
+        {(tools || workflows.length > 0) && (
+          <div className="chat-tools">
+            {workflows.length > 0 && (
+              <WorkflowMenu
+                workflows={workflows}
+                value={workflowKey}
+                disabled={busy}
+                onChange={(key) => {
+                  setWorkflowKey(key);
+                  setTeam({});
+                }}
+              />
+            )}
+            {tools}
+          </div>
+        )}
       </header>
 
       {workspaceError && (
@@ -966,24 +982,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
             </div>
             <div className="row">
               <div className="composer-modes">
-                {workflows.length > 0 && (
-                  <select
-                    aria-label={t("workflows.label")}
-                    value={workflowKey}
-                    disabled={busy}
-                    onChange={(e) => {
-                      setWorkflowKey(e.target.value);
-                      setTeam({});
-                    }}
-                  >
-                    <option value="">{t("workflows.none")}</option>
-                    {workflows.map((w) => (
-                      <option key={w.key} value={w.key}>
-                        {t("workflows.option", { key: w.key })}
-                      </option>
-                    ))}
-                  </select>
-                )}
                 {!workflow && (
                   <ModelMenu
                     models={modelOptions}

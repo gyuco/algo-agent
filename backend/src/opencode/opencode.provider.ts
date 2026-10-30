@@ -282,6 +282,7 @@ export class OpencodeProvider implements AgentProvider {
               ctx.catalog.tools.get(k)!.create({
                 cwd: ctx.cwd,
                 mission: ctx.toolContext?.mission,
+                variables: ctx.catalog.variables,
               }),
             ),
           ...extra,

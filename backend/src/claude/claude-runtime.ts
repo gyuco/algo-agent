@@ -130,7 +130,13 @@ export function capabilities(
       tools: [
         ...policy.tools
           .filter((k) => catalog.tools.has(k))
-          .map((k) => catalog.tools.get(k)!.create({ cwd, mission: toolContext?.mission })),
+          .map((k) =>
+            catalog.tools.get(k)!.create({
+              cwd,
+              mission: toolContext?.mission,
+              variables: catalog.variables,
+            }),
+          ),
         ...appTools,
       ],
       alwaysLoad: true,

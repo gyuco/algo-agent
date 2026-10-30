@@ -2,6 +2,14 @@ import {
   tool,
   type SdkMcpToolDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import {
+  AWS_TOOL_PROMPT,
+  AwsCommandError,
+  awsArgs,
+  awsEnv,
+  runAws,
+} from './aws-tool.js';
 
 /** What a mission tool knows about the turn it serves. */
 export interface MissionToolContext {
@@ -19,6 +27,8 @@ export interface ToolContext {
   cwd: string;
   /** Set only for the mission orchestrator's tools. */
   mission?: MissionToolContext;
+  /** The run's secrets: the project's, then the user's. */
+  variables?: Record<string, string>;
 }
 
 export interface AppTool {
@@ -30,6 +40,11 @@ export interface AppTool {
 
 const text = (value: string) => ({
   content: [{ type: 'text' as const, text: value }],
+});
+
+const failure = (value: string) => ({
+  content: [{ type: 'text' as const, text: value }],
+  isError: true,
 });
 
 /**
@@ -52,6 +67,31 @@ export const APP_TOOLS: Record<string, AppTool> = {
               timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             }),
           ),
+        { annotations: { readOnlyHint: true } },
+      ),
+  },
+  aws: {
+    description:
+      "AWS CLI in sola lettura su CloudWatch Logs e metriche, con l'account dei segreti AWS_PROFILE e AWS_REGION.",
+    enabledByDefault: false,
+    create: (ctx) =>
+      tool(
+        'aws',
+        AWS_TOOL_PROMPT,
+        { command: z.string().trim().min(1).max(4_000) },
+        async ({ command }) => {
+          let args: string[];
+          let env: Record<string, string>;
+          try {
+            args = awsArgs(command);
+            env = awsEnv(ctx.variables ?? {});
+          } catch (error) {
+            if (error instanceof AwsCommandError) return failure(error.message);
+            throw error;
+          }
+          const result = await runAws(args, env, ctx.cwd);
+          return result.ok ? text(result.text) : failure(result.text);
+        },
         { annotations: { readOnlyHint: true } },
       ),
   },

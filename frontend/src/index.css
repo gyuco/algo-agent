@@ -1172,11 +1172,13 @@ button.icon:hover:not(:disabled) {
   margin-left: auto;
 }
 
-.agent-menu {
+.agent-menu,
+.workflow-menu {
   position: relative;
 }
 
-.agent-menu.chosen::after {
+.agent-menu.chosen::after,
+.workflow-menu.chosen::after {
   content: '';
   position: absolute;
   top: 0.25rem;
