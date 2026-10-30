@@ -1,7 +1,20 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
+
+/**
+ * The compiled frontend (`frontend/dist`), served from this process so the app is one
+ * origin in production: `/api` needs no CORS, and one port is enough to expose it
+ * (e.g. through `tailscale serve`). Absent in dev, where Vite serves the app on 5173.
+ */
+function frontendDist(): string {
+  const dist = dirname(fileURLToPath(import.meta.url)); // backend/dist
+  return process.env.FRONTEND_DIST ?? join(dist, '..', '..', 'frontend', 'dist');
+}
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
