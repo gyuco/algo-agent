@@ -193,6 +193,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   const nextId = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  /** Phones open without the keyboard covering the conversation. */
+  const autoFocus = useRef(window.matchMedia("(min-width: 721px)").matches).current;
   /** Follow new output only while the user is at the bottom, so scrolling up to read isn't undone. */
   const stickRef = useRef(true);
 
@@ -974,7 +976,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
               <textarea
                 ref={inputRef}
                 rows={1}
-                autoFocus
+                autoFocus={autoFocus}
                 aria-label={t("chat.messageLabel")}
                 placeholder={workflow ? workflow.input : t("chat.placeholder")}
                 value={input}

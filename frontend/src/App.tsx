@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LoginPage } from './auth/LoginPage'
 import { ProfilePage } from './auth/ProfilePage'
 import { UserMenu } from './auth/UserMenu'
@@ -73,38 +73,91 @@ function AppHeader({
   onLogout: () => void
 }) {
   const { t, language, setLanguage } = useI18n()
+  /** The navigation, collapsed behind the hamburger on phones. */
+  const [navOpen, setNavOpen] = useState(false)
+  const header = useRef<HTMLElement>(null)
+  /** The links, closed after a choice on every size. */
+  const closeNav = () => setNavOpen(false)
+
+  useEffect(() => {
+    if (!navOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!header.current?.contains(e.target as Node)) setNavOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [navOpen])
+
+  // Back/forward and the links themselves close the menu.
+  useEffect(() => {
+    const close = () => setNavOpen(false)
+    window.addEventListener('hashchange', close)
+    return () => window.removeEventListener('hashchange', close)
+  }, [])
+
   return (
-    <header className="app-header">
-      <a className="brand" href="#/">
+    <header className="app-header" ref={header}>
+      <a className="brand" href="#/" onClick={closeNav}>
         <span className="brand-mark" aria-hidden="true">
           a
         </span>
         algo-agent
       </a>
-      <nav aria-label={t('nav.label')}>
+      <nav
+        id="app-nav"
+        className={navOpen ? 'open' : undefined}
+        aria-label={t('nav.label')}
+      >
         <ul>
           <li>
-            <a href="#/" aria-current={page.name === 'home' ? 'page' : undefined}>
+            <a
+              href="#/"
+              onClick={closeNav}
+              aria-current={page.name === 'home' ? 'page' : undefined}
+            >
               {t('nav.home')}
             </a>
           </li>
           <li>
-            <a href="#/projects" aria-current={page.name === 'projects' ? 'page' : undefined}>
+            <a
+              href="#/projects"
+              onClick={closeNav}
+              aria-current={page.name === 'projects' ? 'page' : undefined}
+            >
               {t('nav.projects')}
             </a>
           </li>
           <li>
-            <a href="#/resources" aria-current={page.name === 'resources' ? 'page' : undefined}>
+            <a
+              href="#/resources"
+              onClick={closeNav}
+              aria-current={page.name === 'resources' ? 'page' : undefined}
+            >
               {t('nav.resources')}
             </a>
           </li>
           <li>
-            <a href="#/activity" aria-current={page.name === 'activity' ? 'page' : undefined}>
+            <a
+              href="#/activity"
+              onClick={closeNav}
+              aria-current={page.name === 'activity' ? 'page' : undefined}
+            >
               {t('nav.activity')}
             </a>
           </li>
           <li>
-            <a href="#/connections" aria-current={page.name === 'connections' ? 'page' : undefined}>
+            <a
+              href="#/connections"
+              onClick={closeNav}
+              aria-current={page.name === 'connections' ? 'page' : undefined}
+            >
               {t('nav.connections')}
             </a>
           </li>
@@ -141,6 +194,31 @@ function AppHeader({
         </label>
         <UserMenu email={email} onLogout={onLogout} />
       </div>
+      <button
+        type="button"
+        className="icon nav-toggle"
+        aria-label={t(navOpen ? 'nav.close' : 'nav.open')}
+        aria-expanded={navOpen}
+        aria-controls="app-nav"
+        onClick={() => setNavOpen((open) => !open)}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          {navOpen ? (
+            <path d="M6 6l12 12M18 6 6 18" />
+          ) : (
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          )}
+        </svg>
+      </button>
     </header>
   )
 }
@@ -152,6 +230,24 @@ function App() {
   const runs = useActiveRuns(Boolean(user))
   const missions = useMissionNotifications(Boolean(user))
   const { t } = useI18n()
+
+  /* The visible height: on phones it excludes the keyboard, so the composer
+     stays above it instead of hiding behind it. */
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const root = document.documentElement
+    const update = () =>
+      root.style.setProperty('--app-height', `${Math.round(viewport.height)}px`)
+    update()
+    viewport.addEventListener('resize', update)
+    viewport.addEventListener('scroll', update)
+    return () => {
+      viewport.removeEventListener('resize', update)
+      viewport.removeEventListener('scroll', update)
+      root.style.removeProperty('--app-height')
+    }
+  }, [])
 
   if (loading) return <main className="auth">{t('app.loading')}</main>
   if (!user) return <LoginPage />
