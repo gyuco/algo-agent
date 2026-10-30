@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/useI18n'
 import { projectsApi, type Project } from './api'
+import { ProjectIcon } from './ProjectIcon'
 
 /** Last two folders of a path, with an ellipsis when something is hidden. */
 function shortPath(path: string) {
@@ -41,9 +42,7 @@ export function ProjectCards() {
           {projects.map((p) => (
             <li key={p.id}>
               <a className="card project-card" href={`#/workspace/${p.id}`} title={p.path}>
-                <span className="project-icon" aria-hidden="true">
-                  {p.name.slice(0, 1).toUpperCase()}
-                </span>
+                <ProjectIcon name={p.name} color={p.color} logo={p.logo} />
                 <span className="project-body">
                   <strong>{p.name}</strong>
                   <code title={p.path}>{shortPath(p.path)}</code>

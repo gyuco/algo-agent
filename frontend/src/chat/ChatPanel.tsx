@@ -15,6 +15,7 @@ import type { AgentResource, WorkflowResource } from "../agents/api";
 import type { ConnectionStatus } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
+import { ProjectIcon } from "../projects/ProjectIcon";
 import { isActive, runsApi, type Run, type RunStatus } from "../runs/api";
 import { reasonText } from "../runs/reason";
 import { STATUS_KEY, type ActiveRunsState } from "../runs/useActiveRuns";
@@ -79,6 +80,9 @@ interface Props {
   name: string;
   /** Project folder the agent works in. */
   path: string;
+  /** Project icon: its colour or a logo. */
+  color?: string | null;
+  logo?: string | null;
   /** Agents switched on in the project. */
   agents: AgentResource[];
   /** Workflows switched on in the project, to run from the composer. */
@@ -123,6 +127,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     projectId,
     name,
     path,
+    color,
+    logo,
     agents,
     workflows,
     connections,
@@ -720,6 +726,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     >
       <header className="chat-top">
         <div className="chat-title">
+          <ProjectIcon name={name} color={color} logo={logo} className="project-icon-sm" />
           <h1 className="workspace-title" title={name}>
             {name}
           </h1>

@@ -231,6 +231,39 @@ describe('Project secrets and resources (e2e)', () => {
       .expect(404);
   });
 
+  it('saves the icon colour and the logo on create and update', async () => {
+    const folder = join(dir, 'appearance');
+    await mkdir(folder);
+    const logo = 'data:image/png;base64,iVBORw0KGgo=';
+    const created = await http()
+      .post('/api/projects')
+      .set('Authorization', auth)
+      .send({ name: 'Appearance', path: folder, color: '#12ab34', logo })
+      .expect(201);
+    expect(created.body).toMatchObject({ color: '#12ab34', logo });
+
+    const updated = await http()
+      .put(`/api/projects/${created.body.id}`)
+      .set('Authorization', auth)
+      .send({
+        name: 'Appearance',
+        path: folder,
+        color: null,
+        logo: 'https://example.com/logo.png',
+      })
+      .expect(200);
+    expect(updated.body).toMatchObject({
+      color: null,
+      logo: 'https://example.com/logo.png',
+    });
+
+    await http()
+      .put(`/api/projects/${created.body.id}`)
+      .set('Authorization', auth)
+      .send({ name: 'Appearance', path: folder, color: 'purple' })
+      .expect(400);
+  });
+
   it("won't delete a library resource a project's agent uses", async () => {
     await http()
       .post('/api/resources/skill/style')

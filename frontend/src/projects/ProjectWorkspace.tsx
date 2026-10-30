@@ -153,7 +153,14 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
   return (
     <>
       {project && (view !== 'chat' || !connected) && (
-        <WorkspaceBar name={project.name} path={project.path} view={view} onOpen={openView} />
+        <WorkspaceBar
+          name={project.name}
+          path={project.path}
+          color={project.color}
+          logo={project.logo}
+          view={view}
+          onOpen={openView}
+        />
       )}
       {error !== null && (
         <p className="error" role="alert">
@@ -177,6 +184,8 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
                 projectId={project.id}
                 name={project.name}
                 path={project.path}
+                color={project.color}
+                logo={project.logo}
                 agents={agents}
                 workflows={resources.workflows.filter((w) => w.enabled && !w.task)}
                 connections={connections.connected}

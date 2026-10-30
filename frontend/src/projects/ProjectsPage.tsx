@@ -1,11 +1,21 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useI18n } from '../i18n/useI18n'
 import { missionsApi, type Mission } from '../missions/api'
 import { projectsApi, type Project } from './api'
 import { NewProjectDialog } from './NewProjectDialog'
 import { PathPicker } from './PathPicker'
+import { DEFAULT_PROJECT_COLOR, ProjectIcon } from './ProjectIcon'
 
-type Editing = { id: number | null; name: string; path: string }
+type Editing = {
+  id: number | null
+  name: string
+  path: string
+  /** '' means the default gradient. */
+  color: string
+  logo: string | null
+}
+
+const MAX_LOGO_BYTES = 2 * 1024 * 1024
 
 export function ProjectsPage() {
   const { t } = useI18n()
@@ -18,6 +28,7 @@ export function ProjectsPage() {
   const [deleting, setDeleting] = useState<Project | null>(null)
   const [creatingMission, setCreatingMission] = useState(false)
   const [preparing, setPreparing] = useState<Mission[]>([])
+  const logoRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     projectsApi.list().then(setProjects, (err: unknown) =>
@@ -34,9 +45,35 @@ export function ProjectsPage() {
     setDeleting(null)
     setEditing(
       project
-        ? { id: project.id, name: project.name, path: project.path }
-        : { id: null, name: '', path: '' },
+        ? {
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            color: project.color ?? '',
+            logo: project.logo,
+          }
+        : { id: null, name: '', path: '', color: '', logo: null },
     )
+  }
+
+  /** Reads the chosen image as a data URL: the backend stores it with the project. */
+  function chooseLogo(file: File | undefined) {
+    if (!editing || !file) return
+    if (!file.type.startsWith('image/')) {
+      setFormError(t('projects.logoNotImage'))
+      return
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setFormError(t('projects.logoTooBig'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      setFormError(null)
+      setEditing((current) => current && { ...current, logo: String(reader.result) })
+    }
+    reader.onerror = () => setFormError(t('projects.logoError'))
+    reader.readAsDataURL(file)
   }
 
   async function save(e: FormEvent) {
@@ -45,7 +82,12 @@ export function ProjectsPage() {
     setSaving(true)
     setFormError(null)
     try {
-      const body = { name: editing.name, path: editing.path }
+      const body = {
+        name: editing.name,
+        path: editing.path,
+        color: editing.color || null,
+        logo: editing.logo,
+      }
       const saved =
         editing.id === null
           ? await projectsApi.create(body)
@@ -114,6 +156,66 @@ export function ProjectsPage() {
             <button type="button" className="secondary" onClick={() => setPicking(true)}>
               {t('projects.browse')}
             </button>
+          </div>
+          <div className="project-appearance">
+            <div className="project-field">
+              <span>{t('projects.color')}</span>
+              <div className="row color-choice">
+                <input
+                  type="color"
+                  value={editing.color || DEFAULT_PROJECT_COLOR}
+                  aria-label={t('projects.color')}
+                  onChange={(e) => setEditing({ ...editing, color: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="link"
+                  disabled={!editing.color}
+                  onClick={() => setEditing({ ...editing, color: '' })}
+                >
+                  {t('projects.colorDefault')}
+                </button>
+              </div>
+            </div>
+            <div className="project-field">
+              <span>{t('projects.logo')}</span>
+              <div className="row logo-choice">
+                <ProjectIcon
+                  name={editing.name}
+                  color={editing.color}
+                  logo={editing.logo}
+                  className="project-icon-sm"
+                />
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => logoRef.current?.click()}
+                >
+                  {t('projects.chooseLogo')}
+                </button>
+                {editing.logo && (
+                  <button
+                    type="button"
+                    className="link danger"
+                    onClick={() => setEditing({ ...editing, logo: null })}
+                  >
+                    {t('projects.removeLogo')}
+                  </button>
+                )}
+              </div>
+              <input
+                ref={logoRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  chooseLogo(e.target.files?.[0])
+                  // Allows choosing the same file again after removing it.
+                  e.target.value = ''
+                }}
+              />
+              <small className="hint">{t('projects.logoHint')}</small>
+            </div>
           </div>
           {formError && (
             <p className="error" role="alert">
@@ -200,7 +302,17 @@ export function ProjectsPage() {
           <tbody>
             {projects.map((p) => (
               <tr key={p.id}>
-                <td>{p.name}</td>
+                <td>
+                  <span className="project-name">
+                    <ProjectIcon
+                      name={p.name}
+                      color={p.color}
+                      logo={p.logo}
+                      className="project-icon-sm"
+                    />
+                    {p.name}
+                  </span>
+                </td>
                 <td>
                   <code>{p.path}</code>
                 </td>

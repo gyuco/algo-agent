@@ -21,6 +21,8 @@ const PUBLIC_FIELDS = {
   id: true,
   name: true,
   path: true,
+  color: true,
+  logo: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -67,7 +69,13 @@ export class ProjectsService {
     const path = await resolveWorkspace(dto.path, this.workspaceRoot());
     return this.unique(() =>
       this.prisma.project.create({
-        data: { userId, name: dto.name, path },
+        data: {
+          userId,
+          name: dto.name,
+          path,
+          color: dto.color ?? null,
+          logo: dto.logo ?? null,
+        },
         select: PUBLIC_FIELDS,
       }),
     );
@@ -79,7 +87,13 @@ export class ProjectsService {
     return this.unique(() =>
       this.prisma.project.update({
         where: { id },
-        data: { name: dto.name, path },
+        data: {
+          name: dto.name,
+          path,
+          // Absent fields stay as they are; an empty one clears the setting.
+          color: dto.color,
+          logo: dto.logo,
+        },
         select: PUBLIC_FIELDS,
       }),
     );

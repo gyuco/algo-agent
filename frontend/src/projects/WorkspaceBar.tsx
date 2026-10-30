@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
+import { ProjectIcon } from './ProjectIcon'
 
 /** What the workspace shows under the bar. */
 export type WorkspaceView = 'chat' | 'missions' | 'resources'
@@ -14,6 +15,8 @@ const VIEWS: [WorkspaceView, MessageKey][] = [
 interface Props {
   name: string
   path: string
+  color?: string | null
+  logo?: string | null
   /** View shown now, marked in the menu. */
   view: WorkspaceView
   onOpen: (view: WorkspaceView) => void
@@ -23,9 +26,10 @@ interface Props {
  * Header of the views that don't show one themselves: where the project lives
  * and what it opens. The chat keeps its own, inside the card.
  */
-export function WorkspaceBar({ name, path, view, onOpen }: Props) {
+export function WorkspaceBar({ name, path, color, logo, view, onOpen }: Props) {
   return (
     <div className="workspace-bar">
+      <ProjectIcon name={name} color={color} logo={logo} className="project-icon-sm" />
       <h1 className="workspace-title" title={name}>
         {name}
       </h1>

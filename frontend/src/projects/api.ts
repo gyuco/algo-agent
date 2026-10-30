@@ -4,6 +4,10 @@ export interface Project {
   id: number
   name: string
   path: string
+  /** Icon colour when there is no logo. */
+  color: string | null
+  /** Logo as a data URL or an http(s) URL. */
+  logo: string | null
   createdAt: string
   updatedAt: string
 }
@@ -11,6 +15,8 @@ export interface Project {
 export interface ProjectInput {
   name: string
   path: string
+  color?: string | null
+  logo?: string | null
 }
 
 export interface FolderListing {
