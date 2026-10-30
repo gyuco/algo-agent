@@ -56,7 +56,9 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
+  /* dvh, not vh: on phones 100vh is the height without the browser bars,
+     which is taller than the screen and makes the page scroll. */
+  min-height: 100dvh;
   background-color: var(--bg);
   background-image:
     radial-gradient(52rem 38rem at 6% -4%, rgb(244 114 182 / 0.5), transparent 62%),
@@ -1569,6 +1571,9 @@ button.icon:hover:not(:disabled) {
   /* Set from the visible viewport: above the phone keyboard, and it shrinks with it. */
   position: relative;
   height: var(--app-height, 100dvh);
+  /* .layout's min-height: 100vh would otherwise win and push the composer
+     below the fold, forcing a page scroll that hides the top bar. */
+  min-height: 0;
   /* The same surface as the chat: no coloured flash before it mounts. */
   background: var(--bg);
 }
