@@ -298,4 +298,58 @@ describe('Project secrets and resources (e2e)', () => {
       .set('Authorization', auth)
       .expect(204);
   });
+
+  it('remembers which models each user switched on', async () => {
+    const empty = await http()
+      .get('/api/resources/models')
+      .set('Authorization', auth)
+      .expect(200);
+    expect(empty.body).toEqual({ models: [], restricted: false });
+
+    await http()
+      .put('/api/resources/models')
+      .set('Authorization', auth)
+      .send({ value: 'claude:sonnet', enabled: true })
+      .expect(204);
+    await http()
+      .put('/api/resources/models')
+      .set('Authorization', auth)
+      .send({ value: 'claude:sonnet', enabled: true })
+      .expect(204);
+
+    const on = await http()
+      .get('/api/resources/models/enabled')
+      .set('Authorization', auth)
+      .expect(200);
+    expect(on.body).toEqual({ values: ['claude:sonnet'], restricted: true });
+
+    // Another user has their own choices.
+    const other = await http()
+      .get('/api/resources/models/enabled')
+      .set('Authorization', otherAuth)
+      .expect(200);
+    expect(other.body).toEqual({ values: [], restricted: false });
+
+    await http()
+      .put('/api/resources/models')
+      .set('Authorization', auth)
+      .send({ value: 'claude:sonnet', enabled: false })
+      .expect(204);
+    const off = await http()
+      .get('/api/resources/models/enabled')
+      .set('Authorization', auth)
+      .expect(200);
+    expect(off.body).toEqual({ values: [], restricted: false });
+
+    await http()
+      .put('/api/resources/models')
+      .set('Authorization', auth)
+      .send({ value: '', enabled: true })
+      .expect(400);
+    await http()
+      .put('/api/resources/models')
+      .set('Authorization', auth)
+      .send({ value: 'claude:sonnet', enabled: 'yes' })
+      .expect(400);
+  });
 });

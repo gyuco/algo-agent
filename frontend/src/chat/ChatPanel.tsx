@@ -13,6 +13,7 @@ import {
 import { FILE_ACCESS_KEY } from "../agents/labels";
 import type { AgentResource, WorkflowResource } from "../agents/api";
 import type { ConnectionStatus } from "../connections/api";
+import { connectionsApi } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
 import { ProjectIcon } from "../projects/ProjectIcon";
@@ -151,6 +152,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   const [model, setModel] = useState("");
   /** '' leaves the effort to the model. */
   const [effort, setEffort] = useState("");
+  /** Models switched on in Resources: while some are on, the chat offers only those. */
+  const [modelFilter, setModelFilter] = useState<{
+    values: string[];
+    restricted: boolean;
+  } | null>(null);
   const efforts = effortsOf(model);
   const agent = agents.find((a) => a.key === agentKey);
   /** Delegation shown in place of the main thread; null shows the main thread. */
@@ -211,6 +217,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   }
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // The switches live in Resources: a failure leaves every model on offer.
+  useEffect(() => {
+    connectionsApi.enabledModels().then(setModelFilter, () => setModelFilter(null));
+  }, []);
 
   useEffect(() => {
     chatApi
@@ -660,12 +671,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     };
   }
 
+  /** Switched-on models, when the user restricted the chat from Resources. */
+  const allModels = connections.flatMap((c) => c.models);
+  const allowedModels = modelFilter?.restricted
+    ? new Set(modelFilter.values)
+    : null;
+  /** A stale switch (its model no longer exists) must not leave the chat without models. */
+  const restricts =
+    allowedModels !== null && allModels.some((m) => allowedModels.has(m.value));
+
   const modelOptions = connections.flatMap((c) =>
-    c.models.map((m) => ({
-      value: m.value,
-      label: m.displayName,
-      group: c.label,
-    })),
+    c.models
+      .filter((m) => !restricts || allowedModels?.has(m.value))
+      .map((m) => ({
+        value: m.value,
+        label: m.displayName,
+        group: c.label,
+      })),
   );
 
   function providerLabel(provider: string) {
@@ -682,9 +704,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
 
   /** The model and effort a reopened conversation last used, if still offered; else the defaults. */
   function restoreModel(value: string | null, level: string | null) {
-    const offered = connections.some((c) =>
-      c.models.some((m) => m.value === value),
-    );
+    const offered = modelOptions.some((m) => m.value === value);
     setModel(value && offered ? value : "");
     setEffort(value && level && effortsOf(value).includes(level) ? level : "");
   }

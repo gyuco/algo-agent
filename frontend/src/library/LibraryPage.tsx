@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { FILE_ACCESS_KEY } from '../agents/labels'
 import { EditIcon, TrashIcon } from '../components/Icons'
+import {
+  connectionsApi,
+  type ManagedModel,
+  type ManagedModels,
+} from '../connections/api'
 import { useI18n } from '../i18n/useI18n'
 import { SecretsPanel } from '../vault/SecretsPanel'
 import { libraryApiFor, type EditableKind, type Library } from './api'
@@ -20,7 +25,7 @@ interface Props {
   onChange?: () => void
 }
 
-type Tab = EditableKind | 'tools' | 'secrets'
+type Tab = EditableKind | 'tools' | 'models' | 'secrets'
 
 interface Section {
   kind: EditableKind
@@ -42,6 +47,10 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
   const [notice, setNotice] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('agent')
+  /** Models of the connected providers, loaded when the tab is opened: probing them is not free. */
+  const [models, setModels] = useState<ManagedModels | null>(null)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelBusy, setModelBusy] = useState<string | null>(null)
 
 
   const load = useCallback(() => {
@@ -76,6 +85,42 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
       load()
     } catch (err) {
       setError(err instanceof Error ? err.message : t('library.importFailed'))
+    }
+  }
+
+  useEffect(() => {
+    // Only in the library: a project inherits the models chosen here.
+    if (projectId !== null || tab !== 'models' || models !== null) return
+    connectionsApi.models().then(
+      (list) => {
+        setModels(list)
+        setModelsError(null)
+      },
+      (err: unknown) =>
+        setModelsError(
+          err instanceof Error ? err.message : t('library.modelsLoadFailed'),
+        ),
+    )
+  }, [projectId, tab, models, t])
+
+  async function toggleModel(model: ManagedModel) {
+    setModelBusy(model.value)
+    setError(null)
+    try {
+      await connectionsApi.setModelEnabled(model.value, !model.enabled)
+      setModels(
+        (current) =>
+          current && {
+            ...current,
+            models: current.models.map((m) =>
+              m.value === model.value ? { ...m, enabled: !model.enabled } : m,
+            ),
+          },
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('library.modelsChangeFailed'))
+    } finally {
+      setModelBusy(null)
     }
   }
 
@@ -159,11 +204,19 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
   ]
 
   /** Tools and secrets only exist in the library: a project inherits them. */
+  const modelsLoading =
+    projectId === null &&
+    tab === 'models' &&
+    models === null &&
+    modelsError === null
+  const modelsOn = models?.models.filter((m) => m.enabled).length ?? 0
+  const modelsRestricted = modelsOn > 0
   const tabs: { id: Tab; label: string; count?: number }[] = [
     ...sections.map((s) => ({ id: s.kind, label: s.title, count: s.rows.length })),
     ...(projectId === null
       ? ([
           { id: 'tools', label: t('kind.tools'), count: library.tools.length },
+          { id: 'models', label: t('kind.models'), count: models ? modelsOn : undefined },
           { id: 'secrets', label: t('secrets.userTitle') },
         ] as const)
       : []),
@@ -333,6 +386,75 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
                 </li>
               ))}
             </ul>
+          </section>
+
+          <section
+            className="card resources"
+            role="tabpanel"
+            id="library-panel-models"
+            aria-labelledby="library-tab-models"
+            hidden={tab !== 'models'}
+          >
+            <h2>{t('kind.models')}</h2>
+            <p className="hint">{t('library.modelsNote')}</p>
+            {modelsError && !models ? (
+              <p className="error" role="alert">
+                {modelsError}
+              </p>
+            ) : modelsLoading ? (
+              <p className="hint" aria-busy="true">
+                {t('app.loading')}
+              </p>
+            ) : models ? (
+              models.models.length === 0 ? (
+                <p className="hint">{t('library.modelsEmpty')}</p>
+              ) : (
+                <>
+                  <p className="hint">
+                    {modelsRestricted
+                      ? t('library.modelsSummary', {
+                          active: String(modelsOn),
+                          total: String(models.models.length),
+                        })
+                      : t('library.modelsUnrestricted')}
+                  </p>
+                  <ul className="resource-cards">
+                    {models.models.map((model) => (
+                      <li
+                        key={model.value}
+                        className={model.enabled ? 'resource-card on' : 'resource-card'}
+                      >
+                        <label className="resource-toggle">
+                          <span className="resource-main">
+                            <span className="resource-title">
+                              <strong>{model.displayName}</strong>
+                              <span
+                                className={
+                                  model.enabled ? 'resource-state on' : 'resource-state'
+                                }
+                              >
+                                {t(model.enabled ? 'resources.active' : 'resources.inactive')}
+                              </span>
+                            </span>
+                            <span className="hint resource-desc">
+                              {model.providerLabel} · <code>{model.value}</code>
+                            </span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            role="switch"
+                            checked={model.enabled}
+                            disabled={modelBusy !== null}
+                            aria-label={model.displayName}
+                            onChange={() => void toggleModel(model)}
+                          />
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )
+            ) : null}
           </section>
 
           <div

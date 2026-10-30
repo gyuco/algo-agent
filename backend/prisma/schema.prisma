@@ -15,12 +15,13 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  connections ProviderConnection[]
-  projects    Project[]
-  missions    Mission[]
-  resources   Resource[]
-  runs        Run[]
-  secrets     Secret[]
+  connections   ProviderConnection[]
+  projects      Project[]
+  missions      Mission[]
+  resources     Resource[]
+  runs          Run[]
+  secrets       Secret[]
+  enabledModels EnabledModel[]
 }
 
 /// A user's connection to an agent provider (Claude Code, OpenCode, ...).
@@ -215,6 +216,18 @@ model ProjectResource {
   enabled   Boolean
 
   @@unique([projectId, kind, key])
+}
+
+/// A model the user switched on in their resources: while at least one is on, the chat only offers these.
+model EnabledModel {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Model reference, as the chat sends it: `<provider>:<id>`.
+  value     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, value])
 }
 
 /// A workflow run or a chat turn, executed in the background: it outlives the request that started it.

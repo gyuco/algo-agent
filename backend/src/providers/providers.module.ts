@@ -4,6 +4,8 @@ import { ClaudeProvider } from '../claude/claude.provider.js';
 import { ConnectionsModule } from '../connections/connections.module.js';
 import { OpencodeModule } from '../opencode/opencode.module.js';
 import { OpencodeProvider } from '../opencode/opencode.provider.js';
+import { EnabledModelsService } from './enabled-models.service.js';
+import { ModelsController } from './models.controller.js';
 import type { AgentProvider } from './provider.js';
 import { ProvidersController } from './providers.controller.js';
 import { AGENT_PROVIDERS, ProvidersService } from './providers.service.js';
@@ -13,7 +15,7 @@ const PROVIDERS = [ClaudeProvider, OpencodeProvider];
 
 @Module({
   imports: [ConnectionsModule, ClaudeModule, OpencodeModule],
-  controllers: [ProvidersController],
+  controllers: [ProvidersController, ModelsController],
   providers: [
     {
       provide: AGENT_PROVIDERS,
@@ -21,6 +23,7 @@ const PROVIDERS = [ClaudeProvider, OpencodeProvider];
       inject: PROVIDERS,
     },
     ProvidersService,
+    EnabledModelsService,
   ],
   exports: [ProvidersService],
 })

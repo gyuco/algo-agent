@@ -25,8 +25,31 @@ export interface ConnectionStatus {
   details?: Record<string, unknown>
 }
 
+/** A model of a connected provider, with the switch that makes the chat offer it. */
+export interface ManagedModel extends ModelOption {
+  provider: string
+  providerLabel: string
+  enabled: boolean
+}
+
+/** The models of every connected provider; `restricted`: the chat offers only the enabled ones. */
+export interface ManagedModels {
+  models: ManagedModel[]
+  restricted: boolean
+}
+
 export const connectionsApi = {
   list: () => api<ConnectionStatus[]>('/connections'),
   disconnect: (provider: string) =>
     api<null>(`/connections/${provider}`, { method: 'DELETE' }),
+  /** Every model of the connected providers, with its switch. */
+  models: () => api<ManagedModels>('/resources/models'),
+  /** The model references switched on: the chat offers only these, unless none is on. */
+  enabledModels: () =>
+    api<{ values: string[]; restricted: boolean }>('/resources/models/enabled'),
+  setModelEnabled: (value: string, enabled: boolean) =>
+    api<null>('/resources/models', {
+      method: 'PUT',
+      body: JSON.stringify({ value, enabled }),
+    }),
 }
