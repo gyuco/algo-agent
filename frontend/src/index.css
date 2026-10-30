@@ -804,6 +804,24 @@ button.link.danger {
   color: var(--error);
 }
 
+/* Row actions in tables and lists: compact icon buttons. */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+button.icon-action {
+  display: inline-grid;
+  place-items: center;
+  padding: 0.3rem;
+  border-radius: 6px;
+}
+
+button.link.icon-action:hover:not(:disabled) {
+  background: var(--glass-strong);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1967,6 +1985,36 @@ label.switch input {
 
 .library .card.resources h2 {
   margin: 0;
+}
+
+/* Resource library: one section at a time, picked from the tab bar. */
+.library-tabs {
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  overflow-x: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.library-tabs button {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.85rem;
+  white-space: nowrap;
+}
+
+.library-tabs .tab-count {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* `.card` sets display: flex, which would win over the hidden attribute. */
+.library [hidden] {
+  display: none;
 }
 
 .card.editor {

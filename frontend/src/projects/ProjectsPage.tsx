@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { EditIcon, TrashIcon } from '../components/Icons'
 import { useI18n } from '../i18n/useI18n'
 import { missionsApi, type Mission } from '../missions/api'
 import { projectsApi, type Project } from './api'
@@ -323,19 +324,37 @@ export function ProjectsPage() {
                       <button type="button" className="secondary" onClick={() => setDeleting(null)}>
                         {t('projects.cancel')}
                       </button>
-                      <button type="button" className="danger" onClick={() => void remove(p)}>
-                        {t('projects.delete')}
+                      <button
+                        type="button"
+                        className="danger icon-action"
+                        aria-label={t('projects.delete')}
+                        title={t('projects.delete')}
+                        onClick={() => void remove(p)}
+                      >
+                        <TrashIcon />
                       </button>
                     </>
                   ) : (
-                    <>
-                      <button type="button" className="link" onClick={() => startEdit(p)}>
-                        {t('projects.edit')}
+                    <span className="row-actions">
+                      <button
+                        type="button"
+                        className="link icon-action"
+                        aria-label={t('projects.edit')}
+                        title={t('projects.edit')}
+                        onClick={() => startEdit(p)}
+                      >
+                        <EditIcon />
                       </button>
-                      <button type="button" className="link danger" onClick={() => setDeleting(p)}>
-                        {t('projects.delete')}
+                      <button
+                        type="button"
+                        className="link danger icon-action"
+                        aria-label={t('projects.delete')}
+                        title={t('projects.delete')}
+                        onClick={() => setDeleting(p)}
+                      >
+                        <TrashIcon />
                       </button>
-                    </>
+                    </span>
                   )}
                 </td>
               </tr>

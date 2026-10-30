@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { FILE_ACCESS_KEY } from '../agents/labels'
+import { EditIcon, TrashIcon } from '../components/Icons'
 import { useI18n } from '../i18n/useI18n'
 import { SecretsPanel } from '../vault/SecretsPanel'
 import { libraryApiFor, type EditableKind, type Library } from './api'
@@ -19,6 +20,14 @@ interface Props {
   onChange?: () => void
 }
 
+type Tab = EditableKind | 'tools' | 'secrets'
+
+interface Section {
+  kind: EditableKind
+  title: string
+  rows: Row[]
+}
+
 /**
  * The user's resource library: agents, MCP servers, skills and workflows usable
  * in every project, and their secrets. With a project: the resources of that
@@ -32,6 +41,8 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [tab, setTab] = useState<Tab>('agent')
+
 
   const load = useCallback(() => {
     libraryApi.get().then(setLibrary, (err: unknown) =>
@@ -101,11 +112,11 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
   const mine = (kind: EditableKind) => (r: { key: string }) =>
     projectId === null || library.own.includes(`${kind}:${r.key}`)
 
-  const sections: [EditableKind, string, Row[]][] = [
-    [
-      'agent',
-      t('kind.agents'),
-      library.agents.filter(mine('agent')).map((a) => ({
+  const sections: Section[] = [
+    {
+      kind: 'agent',
+      title: t('kind.agents'),
+      rows: library.agents.filter(mine('agent')).map((a) => ({
         key: a.key,
         description: a.description,
         details: [
@@ -116,11 +127,11 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
           ...(a.model ? [t('detail.model', { model: a.model })] : []),
         ],
       })),
-    ],
-    [
-      'workflow',
-      t('kind.workflows'),
-      library.workflows.filter(mine('workflow')).map((w) => ({
+    },
+    {
+      kind: 'workflow',
+      title: t('kind.workflows'),
+      rows: library.workflows.filter(mine('workflow')).map((w) => ({
         key: w.key,
         description: w.description,
         details: [
@@ -128,24 +139,54 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
           w.steps.map((s) => s.agent).filter(Boolean).join(' → '),
         ],
       })),
-    ],
-    [
-      'mcp',
-      t('kind.mcps'),
-      library.mcp.filter(mine('mcp')).map((m) => ({
+    },
+    {
+      kind: 'mcp',
+      title: t('kind.mcps'),
+      rows: library.mcp.filter(mine('mcp')).map((m) => ({
         key: m.key,
         description: m.description,
         details: [m.type === 'http' ? m.url : `${m.command} ${m.args.join(' ')}`],
       })),
-    ],
-    [
-      'skill',
-      t('kind.skills'),
-      library.skills
+    },
+    {
+      kind: 'skill',
+      title: t('kind.skills'),
+      rows: library.skills
         .filter(mine('skill'))
         .map((s) => ({ key: s.key, description: s.description, details: [] })),
-    ],
+    },
   ]
+
+  /** Tools and secrets only exist in the library: a project inherits them. */
+  const tabs: { id: Tab; label: string; count?: number }[] = [
+    ...sections.map((s) => ({ id: s.kind, label: s.title, count: s.rows.length })),
+    ...(projectId === null
+      ? ([
+          { id: 'tools', label: t('kind.tools'), count: library.tools.length },
+          { id: 'secrets', label: t('secrets.userTitle') },
+        ] as const)
+      : []),
+  ]
+
+  /** Arrow keys move between tabs, as expected of a tablist. */
+  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const step =
+      event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    const index = tabs.findIndex((item) => item.id === tab)
+    const next =
+      event.key === 'Home'
+        ? tabs[0]
+        : event.key === 'End'
+          ? tabs[tabs.length - 1]
+          : step
+            ? tabs[(index + step + tabs.length) % tabs.length]
+            : null
+    if (!next) return
+    event.preventDefault()
+    setTab(next.id)
+    document.getElementById(`library-tab-${next.id}`)?.focus()
+  }
 
   return (
     <div className="library">
@@ -172,53 +213,90 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
       )}
       {notice && <p className="hint">{notice}</p>}
 
-      {sections.map(([kind, title, rows]) => (
-        <section key={kind} className="card resources">
+      <div className="row tabs library-tabs" role="tablist" aria-label={t('library.tabs')}>
+        {tabs.map(({ id, label, count }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`library-tab-${id}`}
+            aria-controls={`library-panel-${id}`}
+            aria-selected={tab === id}
+            tabIndex={tab === id ? 0 : -1}
+            className={tab === id ? '' : 'secondary'}
+            onClick={() => setTab(id)}
+            onKeyDown={onTabKeyDown}
+          >
+            {label}
+            {count !== undefined && <span className="tab-count">{count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {sections.map((section) => (
+        <section
+          key={section.kind}
+          className="card resources"
+          role="tabpanel"
+          id={`library-panel-${section.kind}`}
+          aria-labelledby={`library-tab-${section.kind}`}
+          hidden={tab !== section.kind}
+        >
           <div className="row">
-            <h2 className="grow">{title}</h2>
-            <button type="button" onClick={() => setEditing({ kind, key: null })}>
+            <h2 className="grow">{section.title}</h2>
+            <button type="button" onClick={() => setEditing({ kind: section.kind, key: null })}>
               {t('library.new')}
             </button>
           </div>
-          {rows.length === 0 ? (
+          {section.rows.length === 0 ? (
             <p className="hint">{t('library.none')}</p>
           ) : (
             <ul className="resource-list">
-              {rows.map((r) => (
+              {section.rows.map((r) => (
                 <li key={r.key}>
                   <div className="row">
                     <strong className="grow">{r.key}</strong>
-                    {deleting === `${kind}:${r.key}` ? (
+                    {deleting === `${section.kind}:${r.key}` ? (
                       <>
                         <span className="hint">{t('library.confirmDelete', { name: r.key })}</span>
-                        <button type="button" className="secondary" onClick={() => setDeleting(null)}>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => setDeleting(null)}
+                        >
                           {t('projects.cancel')}
                         </button>
                         <button
                           type="button"
-                          className="danger"
-                          onClick={() => void remove(kind, r.key)}
+                          className="danger icon-action"
+                          aria-label={t('projects.delete')}
+                          title={t('projects.delete')}
+                          onClick={() => void remove(section.kind, r.key)}
                         >
-                          {t('projects.delete')}
+                          <TrashIcon />
                         </button>
                       </>
                     ) : (
-                      <>
+                      <span className="row-actions">
                         <button
                           type="button"
-                          className="link"
-                          onClick={() => setEditing({ kind, key: r.key })}
+                          className="link icon-action"
+                          aria-label={t('projects.edit')}
+                          title={t('projects.edit')}
+                          onClick={() => setEditing({ kind: section.kind, key: r.key })}
                         >
-                          {t('projects.edit')}
+                          <EditIcon />
                         </button>
                         <button
                           type="button"
-                          className="link danger"
-                          onClick={() => setDeleting(`${kind}:${r.key}`)}
+                          className="link danger icon-action"
+                          aria-label={t('projects.delete')}
+                          title={t('projects.delete')}
+                          onClick={() => setDeleting(`${section.kind}:${r.key}`)}
                         >
-                          {t('projects.delete')}
+                          <TrashIcon />
                         </button>
-                      </>
+                      </span>
                     )}
                   </div>
                   <span className="hint">{r.description}</span>
@@ -238,7 +316,13 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
 
       {projectId === null && (
         <>
-          <section className="card resources">
+          <section
+            className="card resources"
+            role="tabpanel"
+            id="library-panel-tools"
+            aria-labelledby="library-tab-tools"
+            hidden={tab !== 'tools'}
+          >
             <h2>{t('kind.tools')}</h2>
             <p className="hint">{t('library.toolsNote')}</p>
             <ul className="resource-list">
@@ -250,7 +334,15 @@ export function LibraryPage({ projectId = null, onChange }: Props) {
               ))}
             </ul>
           </section>
-          <SecretsPanel projectId={null} />
+
+          <div
+            role="tabpanel"
+            id="library-panel-secrets"
+            aria-labelledby="library-tab-secrets"
+            hidden={tab !== 'secrets'}
+          >
+            <SecretsPanel projectId={null} />
+          </div>
         </>
       )}
     </div>

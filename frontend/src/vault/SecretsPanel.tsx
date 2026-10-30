@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { EditIcon, TrashIcon } from '../components/Icons'
 import { useI18n } from '../i18n/useI18n'
 import { vaultApiFor, type SecretInfo } from './api'
 
@@ -104,30 +105,40 @@ export function SecretsPanel({ projectId, onNames }: Props) {
                     <button type="button" className="secondary" onClick={() => setDeleting(null)}>
                       {t('projects.cancel')}
                     </button>
-                    <button type="button" className="danger" onClick={() => void remove(s.name)}>
-                      {t('projects.delete')}
+                    <button
+                      type="button"
+                      className="danger icon-action"
+                      aria-label={t('projects.delete')}
+                      title={t('projects.delete')}
+                      onClick={() => void remove(s.name)}
+                    >
+                      <TrashIcon />
                     </button>
                   </>
                 ) : (
-                  <>
+                  <span className="row-actions">
                     <button
                       type="button"
-                      className="link"
+                      className="link icon-action"
+                      aria-label={t('secrets.replace')}
+                      title={t('secrets.replace')}
                       onClick={() => {
                         setReplacing(s.name)
                         setValue('')
                       }}
                     >
-                      {t('secrets.replace')}
+                      <EditIcon />
                     </button>
                     <button
                       type="button"
-                      className="link danger"
+                      className="link danger icon-action"
+                      aria-label={t('projects.delete')}
+                      title={t('projects.delete')}
                       onClick={() => setDeleting(s.name)}
                     >
-                      {t('projects.delete')}
+                      <TrashIcon />
                     </button>
-                  </>
+                  </span>
                 )}
               </div>
             </li>
