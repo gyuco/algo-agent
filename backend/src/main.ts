@@ -33,6 +33,9 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  // One origin in production: the SPA is served here, `/api` stays on this process.
+  const dist = frontendDist();
+  if (existsSync(dist)) app.useStaticAssets(dist);
   // Personal mode stores the owner's Claude subscription token: never expose it beyond this machine.
   const port = process.env.PORT ?? 3000;
   if (process.env.PERSONAL_MODE === 'true') await app.listen(port, '127.0.0.1');
