@@ -99,7 +99,10 @@ export function ModelMenu({
   }, [open])
 
   useEffect(() => {
-    if (open) search.current?.focus()
+    // On touch screens focusing opens the keyboard, which shrinks the viewport
+    // and pushes the list out of view: there the user taps the search field.
+    const touch = window.matchMedia('(pointer: coarse)').matches
+    if (open && !touch) search.current?.focus()
   }, [open])
 
   const q = query.trim().toLowerCase()

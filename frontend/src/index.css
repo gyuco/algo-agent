@@ -1595,6 +1595,23 @@ button.icon:hover:not(:disabled) {
 }
 
 @media (max-width: 720px) {
+  /* A sheet over the bottom of the screen: no ancestor can clip it. */
+  .menu-popover.model-popover {
+    position: fixed;
+    top: auto;
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: calc(var(--app-height, 100dvh) - 1rem);
+    overflow-y: auto;
+    z-index: 50;
+  }
+
+  .model-popover .menu-list {
+    max-height: min(17rem, 40dvh);
+  }
+
   .menu-popover.sub {
     position: static;
     width: auto;
