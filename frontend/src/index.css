@@ -257,16 +257,6 @@ button.link {
   background: var(--error);
 }
 
-.topbar-context {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 0.9375rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .brand {
   display: inline-flex;
   align-items: center;
@@ -1527,10 +1517,29 @@ button.icon:hover:not(:disabled) {
   margin: -0.5rem 0 0;
 }
 
-/* Workspace: the chat fills the screen below the header, like a chat app. */
+/* Workspace: the chat fills the screen, with the top bar floating over it. */
 .layout.fill {
   /* Set from the visible viewport: above the phone keyboard, and it shrinks with it. */
+  position: relative;
   height: var(--app-height, 100dvh);
+}
+
+.layout.fill .app-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-width: none;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The controls float over the conversation: the icon keeps its own surface. */
+.layout.fill .topbar-toggle {
+  background: var(--glass-strong);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .layout.fill .home {
@@ -1539,7 +1548,13 @@ button.icon:hover:not(:disabled) {
   max-width: none;
   min-height: 0;
   margin: 0;
+  padding: 0;
   overflow: hidden;
+}
+
+/* Non-chat views keep their bar: it starts below the floating controls. */
+.layout.fill .home > :first-child:not(.view-panel) {
+  margin-top: calc(3.5rem + env(safe-area-inset-top));
 }
 
 .workspace-head {
@@ -1564,13 +1579,14 @@ button.icon:hover:not(:disabled) {
 
 .layout.fill .card.chat {
   flex: 1;
+  gap: 0;
   min-height: 0;
   max-width: none;
   margin: 0;
-  padding: 1rem;
+  padding: 0;
   border: none;
   border-radius: 0;
-  background: none;
+  background: var(--bg);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1870,11 +1886,31 @@ button.icon:hover:not(:disabled) {
   }
 }
 
+/* The conversation has no frame: a centred column of messages, full width. */
 .layout.fill .messages {
   flex: 1;
   min-height: 0;
   max-height: none;
+  overflow-y: auto;
   overscroll-behavior: contain;
+  padding: calc(4rem + env(safe-area-inset-top)) max(0.75rem, calc((100% - 54rem) / 2)) 0.75rem;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.layout.fill .card.chat .composer {
+  padding: 0.25rem max(0.5rem, calc((100% - 54rem) / 2))
+    max(0.25rem, env(safe-area-inset-bottom));
+}
+
+/* An error above the conversation clears the floating controls too. */
+.layout.fill .card.chat > .error {
+  margin-top: calc(3.5rem + env(safe-area-inset-top));
+  padding-inline: max(0.75rem, calc((100% - 54rem) / 2));
 }
 
 .chat-empty {
@@ -3792,10 +3828,6 @@ button.danger-text {
     padding: max(0.25rem, env(safe-area-inset-top)) 0.625rem 0.25rem;
   }
 
-  .topbar-context {
-    display: none;
-  }
-
   /* Touch targets. */
   button.icon,
   .avatar {
@@ -3860,28 +3892,8 @@ button.danger-text {
     font-size: 1rem;
   }
 
-  /* The chat takes the whole screen: no outer padding, no card border. */
-  .layout.fill .home {
-    padding: 0;
-  }
-
-  .layout.fill .card.chat {
-    gap: 0;
-    padding: 0;
-    border: none;
-    border-radius: 0;
-    background: var(--bg);
-    box-shadow: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
   .workspace-title {
     font-size: 1rem;
-  }
-
-  .layout.fill .card.chat .composer {
-    padding: 0.25rem 0.5rem max(0.5rem, env(safe-area-inset-bottom));
   }
 
   /* The conversation uses the width; the composer keeps the safe area. */
@@ -3890,16 +3902,6 @@ button.danger-text {
     gap: 0.625rem;
     padding: 0.625rem;
     -webkit-overflow-scrolling: touch;
-  }
-
-  .layout.fill .messages {
-    padding: 0.5rem 0.75rem 0.75rem;
-    border: none;
-    border-radius: 0;
-    background: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    box-shadow: none;
   }
 
   .message {

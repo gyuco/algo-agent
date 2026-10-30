@@ -140,16 +140,6 @@ const NAV_ITEMS: {
   },
 ]
 
-/** What the top bar shows beside the hamburger on wide screens. */
-const PAGE_TITLES: Partial<Record<Page['name'], MessageKey>> = {
-  home: 'nav.home',
-  projects: 'nav.projects',
-  resources: 'nav.resources',
-  activity: 'nav.activity',
-  connections: 'nav.connections',
-  profile: 'user.profile',
-}
-
 /** The navigation, as a drawer instead of a header bar. */
 function NavDrawer({
   page,
@@ -292,7 +282,6 @@ function NavDrawer({
 /** Top bar: only the hamburger on the left and the account on the right. */
 function AppTopBar({
   page,
-  contextTitle,
   connections,
   runs,
   missions,
@@ -300,7 +289,6 @@ function AppTopBar({
   onLogout,
 }: {
   page: Page
-  contextTitle: string | null
   connections: ConnectionsState
   runs: ActiveRunsState
   missions: number
@@ -356,7 +344,6 @@ function AppTopBar({
               />
             )}
           </button>
-          {contextTitle && <span className="topbar-context">{contextTitle}</span>}
         </div>
         <UserMenu email={email} onLogout={onLogout} />
       </header>
@@ -381,13 +368,6 @@ function App() {
   const runs = useActiveRuns(Boolean(user))
   const missions = useMissionNotifications(Boolean(user))
   const { t } = useI18n()
-  /** The open project, so the top bar can name it without a header in the chat. */
-  const [workspaceTitle, setWorkspaceTitle] = useState<{ projectId: number; name: string } | null>(
-    null,
-  )
-  const rememberProjectName = useCallback((projectId: number, name: string) => {
-    setWorkspaceTitle({ projectId, name })
-  }, [])
 
   /* The visible height: on phones it excludes the keyboard, so the composer
      stays above it instead of hiding behind it. */
@@ -411,21 +391,11 @@ function App() {
   if (!user) return <LoginPage />
 
   const displayName = user.name?.trim() || user.email.split('@')[0]
-  const pageTitle = PAGE_TITLES[page.name]
-  const contextTitle =
-    page.name === 'workspace'
-      ? workspaceTitle?.projectId === page.projectId
-        ? workspaceTitle.name
-        : null
-      : pageTitle
-        ? t(pageTitle)
-        : null
 
   return (
     <div className={page.name === 'workspace' ? 'layout fill' : 'layout'}>
       <AppTopBar
         page={page}
-        contextTitle={contextTitle}
         connections={connections}
         runs={runs}
         missions={missions.unread}
@@ -448,7 +418,6 @@ function App() {
             missionId={page.missionId}
             connections={connections}
             runs={runs}
-            onProjectName={rememberProjectName}
           />
         )}
         {page.name === 'home' && <Dashboard connections={connections} name={displayName} />}

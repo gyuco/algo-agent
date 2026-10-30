@@ -22,19 +22,10 @@ interface Props {
   missionId?: number
   connections: ConnectionsState
   runs: ActiveRunsState
-  /** Tells the top bar which project is open, for its title. */
-  onProjectName?: (projectId: number, name: string) => void
 }
 
 /** One project's workspace: chat (and its workflows), missions and the agents it has on. Key it by project. */
-export function ProjectWorkspace({
-  projectId,
-  runId,
-  missionId,
-  connections,
-  runs,
-  onProjectName,
-}: Props) {
+export function ProjectWorkspace({ projectId, runId, missionId, connections, runs }: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
@@ -56,11 +47,8 @@ export function ProjectWorkspace({
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '')
 
   useEffect(() => {
-    projectsApi.get(projectId).then((p) => {
-      setProject(p)
-      onProjectName?.(projectId, p.name)
-    }, fail)
-  }, [projectId, onProjectName])
+    projectsApi.get(projectId).then(setProject, fail)
+  }, [projectId])
 
   const loadResources = useCallback(() => {
     resourcesApi.list(projectId).then(setResources, fail)
