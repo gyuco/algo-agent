@@ -67,6 +67,14 @@ const en = {
   'auth.wait': 'Please wait…',
   'auth.noAccount': 'No account yet? Sign up',
   'auth.hasAccount': 'Already have an account? Sign in',
+  'auth.google': 'Continue with Google',
+  'auth.or': 'or',
+  'auth.googleError.notRegistered':
+    'This Google account has no account here. Sign in with your email and password.',
+  'auth.googleError.conflict':
+    'This account is linked to another Google account.',
+  'auth.googleError.denied': 'Google sign-in was cancelled.',
+  'auth.googleError.failed': 'Google sign-in failed. Try again.',
   'projects.title': 'Projects',
   'projects.new': 'New project',
   'projects.newMission': 'New project with a mission',
@@ -726,6 +734,14 @@ const it: Record<MessageKey, string> = {
   'auth.wait': 'Attendere…',
   'auth.noAccount': 'Non hai un account? Registrati',
   'auth.hasAccount': 'Hai già un account? Accedi',
+  'auth.google': 'Continua con Google',
+  'auth.or': 'oppure',
+  'auth.googleError.notRegistered':
+    'Questo account Google non ha un account qui. Accedi con email e password.',
+  'auth.googleError.conflict':
+    'Questo account è collegato a un altro account Google.',
+  'auth.googleError.denied': 'Accesso con Google annullato.',
+  'auth.googleError.failed': 'Accesso con Google non riuscito. Riprova.',
   'projects.title': 'Progetti',
   'projects.new': 'Nuovo progetto',
   'projects.newMission': 'Nuovo progetto con missione',
@@ -1383,6 +1399,15 @@ const es: Record<MessageKey, string> = {
   'auth.wait': 'Espera…',
   'auth.noAccount': '¿No tienes cuenta? Regístrate',
   'auth.hasAccount': '¿Ya tienes cuenta? Inicia sesión',
+  'auth.google': 'Continuar con Google',
+  'auth.or': 'o',
+  'auth.googleError.notRegistered':
+    'Esta cuenta de Google no tiene cuenta aquí. Inicia sesión con tu email y contraseña.',
+  'auth.googleError.conflict':
+    'Esta cuenta está vinculada a otra cuenta de Google.',
+  'auth.googleError.denied': 'Se canceló el inicio de sesión con Google.',
+  'auth.googleError.failed':
+    'No se pudo iniciar sesión con Google. Inténtalo de nuevo.',
   'projects.title': 'Proyectos',
   'projects.new': 'Nuevo proyecto',
   'projects.newMission': 'Nuevo proyecto con misión',

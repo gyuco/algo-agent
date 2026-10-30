@@ -28,6 +28,19 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  findByGoogleId(googleId: string) {
+    return this.prisma.user.findUnique({ where: { googleId } });
+  }
+
+  /** Binds the account to a Google identity: from then on, Google can sign it in. */
+  async linkGoogleId(id: number, googleId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id },
+      data: { googleId },
+      select: { id: true },
+    });
+  }
+
   findPublicById(id: number): Promise<PublicUser | null> {
     return this.prisma.user.findUnique({
       where: { id },

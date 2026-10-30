@@ -48,7 +48,7 @@ export class AuthService {
       email,
       await bcrypt.hash(password, BCRYPT_ROUNDS),
     );
-    return this.issueToken(user);
+    return this.signIn(user);
   }
 
   async login({ email, password }: CredentialsDto): Promise<AuthResponse> {
@@ -58,7 +58,7 @@ export class AuthService {
       user?.passwordHash ?? DUMMY_HASH,
     );
     if (!user || !valid) throw new UnauthorizedException('Invalid credentials');
-    return this.issueToken({
+    return this.signIn({
       id: user.id,
       email: user.email,
       name: user.name,
@@ -81,7 +81,7 @@ export class AuthService {
       ...(email !== undefined && { email }),
       ...(name !== undefined && { name: name.length > 0 ? name : null }),
     });
-    return this.issueToken(user);
+    return this.signIn(user);
   }
 
   async changePassword(
@@ -105,7 +105,8 @@ export class AuthService {
     );
   }
 
-  private async issueToken(user: PublicUser): Promise<AuthResponse> {
+  /** Issues the token for an already authenticated user: password or Google. */
+  async signIn(user: PublicUser): Promise<AuthResponse> {
     const payload: JwtPayload = { sub: user.id, email: user.email };
     return { accessToken: await this.jwt.signAsync(payload), user };
   }

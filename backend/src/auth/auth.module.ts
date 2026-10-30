@@ -6,6 +6,7 @@ import type { StringValue } from 'ms';
 import { UsersModule } from '../users/users.module.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { GoogleOAuthService } from './google-oauth.service.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 
 @Module({
@@ -23,6 +24,10 @@ import { JwtAuthGuard } from './jwt-auth.guard.js';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
+  providers: [
+    AuthService,
+    GoogleOAuthService,
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+  ],
 })
 export class AuthModule {}

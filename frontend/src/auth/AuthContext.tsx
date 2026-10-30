@@ -14,17 +14,47 @@ import {
   type User,
 } from './context'
 
+/** Replaces the query string, keeping the hash routing the app relies on. */
+function replaceQuery(params: Record<string, string>): void {
+  const url = new URL(window.location.href)
+  url.search = new URLSearchParams(params).toString()
+  window.history.replaceState(null, '', url.toString())
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(() => tokenStore.get() !== null)
+  // The Google callback redirects here with a one-time code: redeem it before showing the app.
+  const [googleCode] = useState(
+    () => new URLSearchParams(window.location.search).get('code'),
+  )
+  const [loading, setLoading] = useState(
+    () => googleCode !== null || tokenStore.get() !== null,
+  )
 
   useEffect(() => {
+    if (googleCode !== null) {
+      api<AuthResponse>('/auth/google/exchange', {
+        method: 'POST',
+        body: JSON.stringify({ code: googleCode }),
+      })
+        .then((res) => {
+          tokenStore.set(res.accessToken)
+          setUser(res.user)
+          replaceQuery({})
+        })
+        .catch(() => {
+          // Back to the login page, which reads the reason and shows it.
+          replaceQuery({ google: 'error', reason: 'failed' })
+        })
+        .finally(() => setLoading(false))
+      return
+    }
     if (!tokenStore.get()) return
     api<User>('/auth/me')
       .then(setUser)
       .catch(() => tokenStore.clear())
       .finally(() => setLoading(false))
-  }, [])
+  }, [googleCode])
 
   const authenticate = useCallback(
     async (path: string, email: string, password: string) => {
