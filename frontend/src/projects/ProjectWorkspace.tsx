@@ -152,7 +152,9 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
 
   return (
     <>
-      {project && (view !== 'chat' || !connected) && (
+      {/* No bar while the providers are still being checked: it would flash a
+          header of a page that is about to become the chat. */}
+      {project && !connections.checking && (view !== 'chat' || !connected) && (
         <WorkspaceBar
           name={project.name}
           path={project.path}

@@ -1522,6 +1522,8 @@ button.icon:hover:not(:disabled) {
   /* Set from the visible viewport: above the phone keyboard, and it shrinks with it. */
   position: relative;
   height: var(--app-height, 100dvh);
+  /* The same surface as the chat: no coloured flash before it mounts. */
+  background: var(--bg);
 }
 
 .layout.fill .app-topbar {
