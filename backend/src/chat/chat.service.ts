@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -24,10 +25,23 @@ import {
   type RunOutcome,
 } from '../runs/run-types.js';
 import { ChatMessageDto } from './dto/chat.dto.js';
+import { stripWorkflowContext, workflowContext } from './workflow-context.js';
 import { describeWorkspace, resolveWorkspace } from './workspace.js';
 
 /** Lists show this much of a turn's message. */
 const TITLE_LENGTH = 80;
+
+/** What a chat turn keeps in `specJson`. */
+interface ChatTurnSpec {
+  /** Workflow runs whose result the turn passes on to the model. */
+  workflowRuns?: number[];
+}
+
+function workflowRunsOf(run: Run): number[] {
+  return run.specJson
+    ? ((JSON.parse(run.specJson) as ChatTurnSpec).workflowRuns ?? [])
+    : [];
+}
 
 /** Where a conversation's latest turn stands, for the list of conversations. */
 function turnState(run: Run | undefined, reason: (id: number) => unknown) {
@@ -90,7 +104,9 @@ export class ChatService implements RunHandler, OnModuleInit {
       sessionId: dto.sessionId,
       model: dto.model,
     });
+    const workflowRuns = await this.checkWorkflowRuns(userId, project.id, dto);
     const attachments = dto.attachments ?? [];
+    const spec: ChatTurnSpec = { workflowRuns };
     const run = await this.queue.enqueue(
       {
         projectId: project.id,
@@ -107,17 +123,46 @@ export class ChatService implements RunHandler, OnModuleInit {
         effort: dto.effort ?? null,
         provider,
         writes,
+        specJson: workflowRuns.length ? JSON.stringify(spec) : null,
       },
       (run) => this.files.saveAttachments(run.id, attachments),
     );
     return { runId: run.id, status: run.status };
   }
 
+  /**
+   * The workflow runs the turn passes on: the user's, in the project, ended,
+   * and in this conversation or in none yet (a new conversation's).
+   */
+  private async checkWorkflowRuns(
+    userId: number,
+    projectId: number,
+    dto: ChatMessageDto,
+  ) {
+    const ids = [...new Set(dto.workflowRuns ?? [])];
+    if (!ids.length) return [];
+    const runs = await this.prisma.run.findMany({
+      where: { id: { in: ids }, userId, projectId, kind: 'workflow' },
+    });
+    const usable = runs.filter(
+      (r) =>
+        !isActive(r.status) &&
+        (r.sessionId === null || r.sessionId === (dto.sessionId ?? null)),
+    );
+    if (usable.length !== ids.length) {
+      throw new BadRequestException(
+        'Un workflow indicato non appartiene a questa conversazione o non è finito',
+      );
+    }
+    return ids.sort((a, b) => a - b);
+  }
+
+  /** A chat turn or a workflow still going in the conversation. */
   private activeTurn(userId: number, sessionId: string) {
     return this.prisma.run.findFirst({
       where: {
         userId,
-        kind: 'chat',
+        kind: { in: ['chat', 'workflow'] },
         sessionId,
         status: { in: ACTIVE_STATUSES },
       },
@@ -131,13 +176,22 @@ export class ChatService implements RunHandler, OnModuleInit {
     signal: AbortSignal,
   ): AsyncGenerator<RunEventData, RunOutcome> {
     const project = await this.projects.get(run.userId, run.projectId!);
+    const workflowRuns = workflowRunsOf(run);
+    const context = workflowRuns.length
+      ? workflowContext(
+          await this.prisma.run.findMany({
+            where: { id: { in: workflowRuns }, userId: run.userId },
+            orderBy: { id: 'asc' },
+          }),
+        )
+      : '';
     let outcome: RunOutcome = 'done';
     for await (const event of this.runner.run({
       userId: run.userId,
       project,
       agent: run.agent ?? undefined,
       prompt: {
-        text: run.input,
+        text: context ? `${run.input}\n\n${context}` : run.input,
         attachments: await this.files.attachments(run.id),
       },
       sessionId: run.sessionId ?? undefined,
@@ -147,6 +201,13 @@ export class ChatService implements RunHandler, OnModuleInit {
     })) {
       if (event.type === 'error') outcome = 'failed';
       if (event.type === 'done' && event.isError) outcome = 'failed';
+      // A new conversation's workflows join it once it has an id.
+      if (event.type === 'session' && workflowRuns.length) {
+        await this.prisma.run.updateMany({
+          where: { id: { in: workflowRuns }, sessionId: null },
+          data: { sessionId: event.sessionId },
+        });
+      }
       yield event;
     }
     return outcome;
@@ -185,7 +246,7 @@ export class ChatService implements RunHandler, OnModuleInit {
     );
 
     const runs = await this.prisma.run.findMany({
-      where: { userId, projectId, kind: 'chat' },
+      where: { userId, projectId, kind: { in: ['chat', 'workflow'] } },
       orderBy: { id: 'desc' },
       take: 200,
     });
@@ -210,7 +271,8 @@ export class ChatService implements RunHandler, OnModuleInit {
     const unnamed: Run[] = [];
     for (const run of runs) {
       if (!run.sessionId) {
-        if (isActive(run.status)) unnamed.push(run);
+        // A workflow run in no conversation yet stays one of its own.
+        if (isActive(run.status) || run.kind === 'workflow') unnamed.push(run);
       } else if (!latest.has(run.sessionId)) {
         latest.set(run.sessionId, run);
       }
@@ -230,10 +292,16 @@ export class ChatService implements RunHandler, OnModuleInit {
     const pending = [...latest.values()]
       .filter((r) => isActive(r.status) && !known.has(r.sessionId!))
       .map((r) => this.fromRun(r, r.sessionId, reason));
-    const sorted = [...listed, ...pending].sort((a, b) =>
-      b.updatedAt.localeCompare(a.updatedAt),
-    );
-    return [...unnamed.map((r) => this.fromRun(r, null, reason)), ...sorted];
+    const [going, ended] = [
+      unnamed.filter((r) => isActive(r.status)),
+      unnamed.filter((r) => !isActive(r.status)),
+    ];
+    const sorted = [
+      ...listed,
+      ...pending,
+      ...ended.map((r) => this.fromRun(r, null, reason)),
+    ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return [...going.map((r) => this.fromRun(r, null, reason)), ...sorted];
   }
 
   private fromRun(
@@ -244,7 +312,10 @@ export class ChatService implements RunHandler, OnModuleInit {
     return {
       sessionId,
       provider: run.provider ?? '',
-      title: run.title,
+      title:
+        run.kind === 'workflow'
+          ? `${run.workflow}: ${run.input}`.slice(0, TITLE_LENGTH)
+          : run.title,
       updatedAt: run.createdAt.toISOString(),
       runId: run.id,
       missionId: null as number | null,
@@ -267,11 +338,21 @@ export class ChatService implements RunHandler, OnModuleInit {
       orderBy: { id: 'desc' },
     });
     const active = latest && isActive(latest.status) ? latest : null;
-    let messages = await provider.history(userId, cwd, ref.id);
-    if (!messages && !active) {
+    const workflows = await this.prisma.run.findMany({
+      where: { userId, projectId, kind: 'workflow', sessionId: ownRef },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+    const found = await provider.history(userId, cwd, ref.id);
+    if (!found && !active && !workflows.length) {
       throw new NotFoundException('Conversazione non trovata');
     }
-    messages ??= [];
+    // The workflow context a turn passed on is the app's, not the user's text.
+    let messages = (found ?? []).map((m) => {
+      if (m.role !== 'user') return { ...m, workflowRuns: [] as number[] };
+      const { text, runIds } = stripWorkflowContext(m.text);
+      return { ...m, text, workflowRuns: runIds };
+    });
     if (active) {
       const turn = messages.findLastIndex((m) => m.role === 'user');
       if (turn >= 0 && messages[turn].text.trim() === active.input.trim()) {
@@ -283,10 +364,16 @@ export class ChatService implements RunHandler, OnModuleInit {
       select: { id: true },
       orderBy: { id: 'desc' },
     });
+    const passedOn = new Set([
+      ...messages.flatMap((m) => m.workflowRuns),
+      ...(active ? workflowRunsOf(active) : []),
+    ]);
     return {
       sessionId: ownRef,
       provider: provider.id,
       messages,
+      /** Workflow runs no turn passed on yet: they come after the messages. */
+      workflowRuns: workflows.map((w) => w.id).filter((id) => !passedOn.has(id)),
       missionId: mission?.id ?? null,
       /** Model chosen for the latest turn, to offer it again; null: the default one. */
       model: latest?.model ?? null,
@@ -294,7 +381,12 @@ export class ChatService implements RunHandler, OnModuleInit {
       effort: latest?.effort ?? null,
       /** The conversation's latest turn, to follow it or mark it seen. */
       lastRun: latest
-        ? { runId: latest.id, status: latest.status, input: latest.input }
+        ? {
+            runId: latest.id,
+            status: latest.status,
+            input: latest.input,
+            workflowRuns: workflowRunsOf(latest),
+          }
         : null,
     };
   }

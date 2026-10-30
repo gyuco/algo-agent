@@ -3,12 +3,11 @@ import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 
 /** What the workspace shows under the bar. */
-export type WorkspaceView = 'chat' | 'missions' | 'workflows' | 'resources'
+export type WorkspaceView = 'chat' | 'missions' | 'resources'
 
 const VIEWS: [WorkspaceView, MessageKey][] = [
   ['chat', 'chat.title'],
   ['missions', 'missions.title'],
-  ['workflows', 'workspace.tabWorkflows'],
   ['resources', 'workspace.tabResources'],
 ]
 
@@ -40,7 +39,7 @@ export function WorkspaceBar({ name, path, view, onOpen }: Props) {
   )
 }
 
-/** Opens the views the tabs used to show: the chat, the missions, the workflows, the resources. */
+/** Opens the views the tabs used to show: the chat, the missions, the resources. */
 export function ViewMenu({ view, onOpen }: { view: WorkspaceView; onOpen: (view: WorkspaceView) => void }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)

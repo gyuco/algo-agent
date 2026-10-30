@@ -14,6 +14,9 @@ import type {
   RunContext,
 } from '../src/providers/provider.js';
 
+/** The prompt of every turn the fake provider ran, with its model. */
+const turns: { text: string; model?: string }[] = [];
+
 /**
  * A provider that answers every turn with "one two three", a word every
  * `delay` ms, and stops when the turn is stopped. A prompt with `ECHO<<…>>`
@@ -37,6 +40,7 @@ function fakeProvider(delay = 60): AgentProvider {
       }),
     disconnect: () => Promise.resolve(),
     async *run(ctx: RunContext): AsyncGenerator<ChatEvent> {
+      turns.push({ text: ctx.prompt.text, model: ctx.model });
       yield {
         type: 'session',
         provider: 'fake',
@@ -311,6 +315,71 @@ describe('Background runs (e2e)', () => {
       .post(`/api/runs/${first}/resume`)
       .set('Authorization', auth)
       .expect(409);
+  });
+
+  it('runs a workflow with the agents and models chosen, then passes it on to the chat', async () => {
+    const { userId } = await prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+    });
+    await prisma.resource.create({
+      data: {
+        userId,
+        kind: 'agent',
+        key: 'critic',
+        specJson: JSON.stringify({
+          description: 'Criticizes',
+          enabledByDefault: true,
+          permissions: { files: 'read' },
+          prompt: 'Criticize.',
+        }),
+      },
+    });
+    const start = (body: Record<string, unknown>) =>
+      http()
+        .post(`/api/projects/${projectId}/workflows/two/runs`)
+        .set('Authorization', auth)
+        .send({ input: 'go', ...body });
+
+    // Only the agents the workflow names can be given to someone else.
+    await start({ assign: [{ slot: 'nobody', agent: 'critic' }] }).expect(400);
+
+    const runId = (
+      await start({
+        assign: [{ slot: 'writer', agent: 'critic', model: 'fake:fake-2' }],
+      }).expect(202)
+    ).body.runId as number;
+    await until(async () => (await status(runId)) === 'done');
+    const steps = (
+      await http().get(`/api/runs/${runId}`).set('Authorization', auth)
+    ).body.steps as { agent: string; model?: string; role?: string }[];
+    expect(steps.map((st) => [st.agent, st.model, st.role])).toEqual([
+      ['critic', 'fake:fake-2', 'writer'],
+      ['critic', 'fake:fake-2', 'writer'],
+    ]);
+    expect(turns.at(-1)?.model).toBe('fake-2');
+
+    // The next turn of the new conversation gets it, and the run joins the conversation.
+    const turn = (
+      await send({ message: 'what did it find?', workflowRuns: [runId] }).expect(
+        202,
+      )
+    ).body.runId as number;
+    await until(async () => (await status(turn)) === 'done');
+    const prompt = turns.at(-1)!.text;
+    expect(prompt.startsWith('what did it find?\n\n')).toBe(true);
+    expect(prompt).toContain(`<workflow-run id="${runId}">`);
+    const { sessionId } = await prisma.run.findUniqueOrThrow({
+      where: { id: turn },
+    });
+    const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
+    expect(run.sessionId).toBe(sessionId);
+
+    // A run of another conversation can't be passed on.
+    await send({
+      message: 'again',
+      sessionId: 'fake:other',
+      workflowRuns: [runId],
+    }).expect(400);
   });
 
   describe('workflow steps that need approval', () => {

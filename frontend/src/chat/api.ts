@@ -44,6 +44,8 @@ export interface SendMessage {
   model?: string;
   /** One of the model's `efforts`; the model's default when omitted. */
   effort?: string;
+  /** Workflow runs since the last turn, whose result the turn passes on to the model. */
+  workflowRuns?: number[];
 }
 
 /** A conversation of the project, with its turn in progress if any. */
@@ -85,6 +87,8 @@ export interface HistoryMessage {
     tools: HistoryTool[];
     isError: boolean;
   }[];
+  /** A user message: the workflow runs it passed on, shown before it. */
+  workflowRuns: number[];
 }
 
 export interface SessionHistory {
@@ -92,13 +96,21 @@ export interface SessionHistory {
   provider: string;
   /** Finished turns only: a turn in progress is in `lastRun`, to follow. */
   messages: HistoryMessage[];
+  /** Workflow runs no turn passed on yet: they come after the messages. */
+  workflowRuns: number[];
   /** Mission born from this conversation, if any. */
   missionId: number | null;
   /** Model chosen for the latest turn (`<provider>:<model>`); null: the default one. */
   model: string | null;
   /** Effort chosen for the latest turn; null: the model's default. */
   effort: string | null;
-  lastRun: { runId: number; status: RunStatus; input: string } | null;
+  lastRun: {
+    runId: number;
+    status: RunStatus;
+    input: string;
+    /** The workflow runs the turn passes on, shown before it. */
+    workflowRuns: number[];
+  } | null;
 }
 
 export const chatApi = {

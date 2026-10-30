@@ -109,4 +109,11 @@ export class ChatMessageDto {
   @IsOptional()
   @Matches(/^[a-z]{1,16}$/)
   effort?: string;
+
+  /** Workflow runs of the conversation since its last turn, whose result the turn passes on to the model. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsInt({ each: true })
+  workflowRuns?: number[];
 }

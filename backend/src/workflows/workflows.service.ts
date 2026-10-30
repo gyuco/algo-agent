@@ -16,6 +16,7 @@ import {
   type GraphStep,
 } from '../catalog/workflow-graph.js';
 import type { Run } from '../generated/prisma/client.js';
+import { ACTIVE_STATUSES } from '../runs/run-types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { runGraph, type Answer, type StepPort } from '../runs/graph-engine.js';
@@ -34,6 +35,27 @@ import { RunsService } from '../runs/runs.service.js';
 /** Tells whether a workflow changed since a run of it was created. */
 const hashOf = (workflow: WorkflowSpec) =>
   createHash('sha256').update(JSON.stringify(workflow)).digest('hex');
+
+/** Who fills one of the agents a workflow names, for one run. */
+export interface Assignment {
+  agent: string;
+  model?: string;
+  effort?: string;
+}
+
+/** By slot: the agent key the workflow names. Slots left out keep their agent. */
+export type Assignments = Record<string, Assignment>;
+
+/** What a workflow run keeps in `specJson`. */
+interface WorkflowRunSpec {
+  assign?: Assignments;
+}
+
+function readAssignments(run: Run): Assignments {
+  return run.specJson
+    ? ((JSON.parse(run.specJson) as WorkflowRunSpec).assign ?? {})
+    : {};
+}
 
 /**
  * Runs a workflow of the user's library: its steps one at a time, each after
@@ -79,6 +101,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     userId: number,
     project: { id: number; path: string },
     key: string,
+    assign: Assignments = {},
   ) {
     const catalog = await this.catalogService.forProject(userId, project.id);
     const workflow = catalog.workflows.get(key);
@@ -93,13 +116,22 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
         'È un modello di task: si usa solo nelle missioni',
       );
     }
+    const slots = new Set(workflow.steps.map((s) => s.agent));
+    const unknown = Object.keys(assign).filter((slot) => !slots.has(slot));
+    if (unknown.length) {
+      throw new BadRequestException(
+        `Il workflow ${key} non usa gli agenti ${unknown.join(', ')}`,
+      );
+    }
     let writes = false;
     let provider: string | null = null;
     for (const step of workflow.steps) {
+      const chosen = step.agent ? assign[step.agent] : undefined;
       const checked = await this.runner.check({
         userId,
         project,
-        agent: step.agent,
+        agent: chosen?.agent ?? step.agent,
+        model: chosen?.model,
       });
       writes ||= checked.writes;
       provider ??= checked.provider;
@@ -107,22 +139,50 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     return { workflow, writes, provider };
   }
 
-  /** Queues a run of the workflow; it starts when the limits allow. */
-  async create(userId: number, projectId: number, key: string, input: string) {
+  /**
+   * Queues a run of the workflow; it starts when the limits allow. In a chat
+   * conversation it waits for no turn: one at a time, like the chat's own.
+   */
+  async create(
+    userId: number,
+    projectId: number,
+    key: string,
+    request: { input: string; sessionId?: string; assign?: Assignments },
+  ) {
     const project = await this.projects.get(userId, projectId);
+    const assign = request.assign ?? {};
     const { workflow, writes, provider } = await this.check(
       userId,
       project,
       key,
+      assign,
     );
+    if (request.sessionId) {
+      const busy = await this.prisma.run.count({
+        where: {
+          userId,
+          kind: { in: ['chat', 'workflow'] },
+          sessionId: request.sessionId,
+          status: { in: ACTIVE_STATUSES },
+        },
+      });
+      if (busy) {
+        throw new ConflictException(
+          'Questa conversazione ha già una risposta in corso',
+        );
+      }
+    }
+    const spec: WorkflowRunSpec = { assign };
     const run = await this.queue.enqueue({
       projectId,
       userId,
       kind: 'workflow',
       title: key,
-      input,
+      input: request.input,
       workflow: key,
       workflowHash: hashOf(workflow),
+      sessionId: request.sessionId ?? null,
+      specJson: JSON.stringify(spec),
       writes,
       provider,
     });
@@ -136,6 +196,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
       run.userId,
       project,
       run.workflow!,
+      readAssignments(run),
     );
     if (run.workflowHash && hashOf(workflow) !== run.workflowHash) {
       throw new ConflictException(
@@ -170,6 +231,8 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
       input: run.input,
       workflow: run.workflow,
       workflowHash: hashOf(workflow),
+      sessionId: run.sessionId,
+      specJson: run.specJson,
       writes,
       provider,
       stepsJson: JSON.stringify(kept),
@@ -189,16 +252,33 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     signal: AbortSignal,
   ): AsyncGenerator<RunEventData, RunOutcome> {
     const project = await this.projects.get(run.userId, run.projectId!);
+    const assign = readAssignments(run);
     // Permissions as they are now, not as they were when it was queued.
-    const { workflow } = await this.check(run.userId, project, run.workflow!);
+    const { workflow } = await this.check(
+      run.userId,
+      project,
+      run.workflow!,
+      assign,
+    );
     if (run.resumeOf && hashOf(workflow) !== run.workflowHash) {
       throw new ConflictException(
         'Il workflow è cambiato mentre la ripresa era in coda: avvialo di nuovo',
       );
     }
 
-    // The catalog has already checked the graph, so it has an order.
-    const order = sortSteps(normalizeSteps(workflow.steps))!;
+    // The catalog has already checked the graph, so it has an order. Each step
+    // runs with the agent its slot was given; the slot stays as its role.
+    const slotOf = new Map<string, string>();
+    const order = sortSteps(normalizeSteps(workflow.steps))!.map((step) => {
+      const chosen = step.agent ? assign[step.agent] : undefined;
+      if (!chosen) return step;
+      slotOf.set(step.id, step.agent!);
+      return { ...step, agent: chosen.agent };
+    });
+    const assigned = (step: GraphStep) => {
+      const slot = slotOf.get(step.id);
+      return slot ? { slot, ...assign[slot] } : undefined;
+    };
     const steps: StepResults = readSteps(run.stepsJson);
     // A resumed run shows the steps it kept; one back from waiting has them in its log.
     if (!(await this.prisma.runEvent.count({ where: { runId: run.id } }))) {
@@ -218,13 +298,21 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
       });
     const port: StepPort = {
       invoke: (step: GraphStep, text: string, sessionId?: string) =>
-        this.invoke(run, project, signal, step.agent, text, sessionId),
+        this.invoke(run, project, signal, step.agent, text, sessionId, {
+          model: assigned(step)?.model,
+          effort: assigned(step)?.effort,
+        }),
+      describe: (step: GraphStep) => {
+        const chosen = assigned(step);
+        return chosen ? { model: chosen.model, role: chosen.slot } : {};
+      },
       approval: async (step: GraphStep) => ({
         writes: (
           await this.runner.check({
             userId: run.userId,
             project,
             agent: step.agent,
+            model: assigned(step)?.model,
           })
         ).writes,
       }),
@@ -246,7 +334,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     }
   }
 
-  /** One session of `agent` on `text`, continuing `sessionId` when given. */
+  /** One session of `agent` on `text`, continuing `sessionId` when given, with the model its slot was given. */
   private async *invoke(
     run: Run,
     project: { id: number; path: string },
@@ -254,6 +342,7 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     agent: string,
     text: string,
     sessionId?: string,
+    chosen: { model?: string; effort?: string } = {},
   ): AsyncGenerator<RunEventData, Answer> {
     const answer: Answer = { output: '', costUsd: 0, failed: false };
     for await (const event of this.runner.run({
@@ -262,6 +351,8 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
       agent,
       prompt: { text, attachments: [] },
       sessionId,
+      model: chosen.model,
+      effort: chosen.effort,
       signal,
     })) {
       if (event.type === 'text') answer.output += event.text;
@@ -296,7 +387,12 @@ export class WorkflowsService implements RunHandler, OnModuleInit {
     if (run.kind !== 'workflow')
       throw new NotFoundException('Passo non trovato');
     const project = await this.projects.get(userId, run.projectId!);
-    const { workflow } = await this.check(userId, project, run.workflow!);
+    const { workflow } = await this.check(
+      userId,
+      project,
+      run.workflow!,
+      readAssignments(run),
+    );
     if (hashOf(workflow) !== run.workflowHash) {
       throw new ConflictException(
         "Il workflow è cambiato durante l'attesa: rifiuta il passo e avvia una nuova esecuzione",

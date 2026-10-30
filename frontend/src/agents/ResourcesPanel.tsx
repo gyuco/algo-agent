@@ -45,32 +45,60 @@ export function ResourcesPanel({ projectId, resources, secretNames, onChange }: 
     }
   }
 
+  const all = [
+    resources.agents,
+    resources.workflows,
+    resources.tools,
+    resources.mcp,
+    resources.skills,
+  ]
+  const active = all.reduce((n, items) => n + items.filter((item) => item.enabled).length, 0)
+
   function section(
     title: string,
     kind: ResourceKind,
     items: Item[],
+    description: string,
     extra?: (item: Item) => ReactNode,
   ) {
+    const on = items.filter((item) => item.enabled).length
     return (
       <section className="resource-section">
-        <h3>{title}</h3>
+        <div className="resource-section-head">
+          <div className="grow">
+            <h3>{title}</h3>
+            <p className="hint">{description}</p>
+          </div>
+          <span className="resource-count">
+            {on}/{items.length}
+          </span>
+        </div>
         {items.length === 0 ? (
           <p className="hint">{t('resources.none')}</p>
         ) : (
-          <ul className="resource-list">
+          <ul className="resource-cards">
             {items.map((item) => (
-              <li key={item.key} className={item.enabled ? '' : 'off'}>
-                <label className="switch">
+              <li key={item.key} className={item.enabled ? 'resource-card on' : 'resource-card'}>
+                <label className="resource-toggle">
+                  <span className="resource-main">
+                    <span className="resource-title">
+                      <strong>{item.key}</strong>
+                      {item.own && <span className="badge accent">{t('resources.ownBadge')}</span>}
+                      <span className={item.enabled ? 'resource-state on' : 'resource-state'}>
+                        {t(item.enabled ? 'resources.active' : 'resources.inactive')}
+                      </span>
+                    </span>
+                    <span className="hint resource-desc">{item.description}</span>
+                  </span>
                   <input
                     type="checkbox"
+                    role="switch"
                     checked={item.enabled}
                     disabled={busy !== null}
+                    aria-label={item.key}
                     onChange={() => void toggle(kind, item)}
                   />
-                  <strong>{item.key}</strong>
-                  {item.own && <span className="badge accent">{t('resources.ownBadge')}</span>}
                 </label>
-                <span className="hint">{item.description}</span>
                 {extra?.(item)}
               </li>
             ))}
@@ -81,26 +109,59 @@ export function ResourcesPanel({ projectId, resources, secretNames, onChange }: 
   }
 
   return (
-    <div className="card resources">
-      <p className="hint">
-        {t('resources.introLead')} <a href="#/resources">{t('resources.tabLink')}</a>.{' '}
-        {t('resources.introTail')}
+    <div className="card resources resources-panel">
+      <header className="resources-head">
+        <div className="grow">
+          <h2>{t('resources.title')}</h2>
+          <p className="hint">{t('resources.introTail')}</p>
+        </div>
+        <a className="button secondary resources-manage" href="#/resources">
+          {t('resources.manage')}
+        </a>
+      </header>
+      <p className="resources-summary hint">
+        {t('resources.summary', {
+          active: String(active),
+          total: String(all.reduce((n, items) => n + items.length, 0)),
+        })}
       </p>
       {error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
-      {section(t('kind.agents'), 'agent', resources.agents, (item) => (
-        <AgentPermissions agent={item as AgentResource} />
-      ))}
-      {section(t('kind.workflows'), 'workflow', resources.workflows)}
-      {section(t('kind.tools'), 'tool', resources.tools)}
-      {section(t('kind.mcps'), 'mcp', resources.mcp, (item) => (
-        <McpNeeds mcp={item as McpResource} secretNames={secretNames} />
-      ))}
-      {section(t('kind.skills'), 'skill', resources.skills)}
+      {section(
+        t('kind.agents'),
+        'agent',
+        resources.agents,
+        t('resources.agentsHint'),
+        (item) => <AgentPermissions agent={item as AgentResource} />,
+      )}
+      {section(
+        t('kind.workflows'),
+        'workflow',
+        resources.workflows,
+        t('resources.workflowsHint'),
+      )}
+      {section(t('kind.tools'), 'tool', resources.tools, t('resources.toolsHint'))}
+      {section(
+        t('kind.mcps'),
+        'mcp',
+        resources.mcp,
+        t('resources.mcpsHint'),
+        (item) => <McpNeeds mcp={item as McpResource} secretNames={secretNames} />,
+      )}
+      {section(t('kind.skills'), 'skill', resources.skills, t('resources.skillsHint'))}
     </div>
+  )
+}
+
+function Chip({ label, children, tone }: { label: string; children: ReactNode; tone?: string }) {
+  return (
+    <span className={tone ? `meta-chip ${tone}` : 'meta-chip'}>
+      <span className="meta-label">{label}</span>
+      {children}
+    </span>
   )
 }
 
@@ -108,26 +169,42 @@ function AgentPermissions({ agent }: { agent: AgentResource }) {
   const { t } = useI18n()
   const { permissions: asked, effective } = agent
   const lists = [
-    ['detail.tool', asked.tools, effective.tools],
-    ['detail.mcp', asked.mcp, effective.mcp],
-    ['detail.skill', asked.skills, effective.skills],
+    ['resources.tools', asked.tools, effective.tools],
+    ['resources.mcp', asked.mcp, effective.mcp],
+    ['resources.skills', asked.skills, effective.skills],
   ] as const
+  const accessRank = { none: 0, read: 1, write: 2 }
+  /** Permissions the agent asks for that this project doesn't grant. */
+  const missing =
+    (accessRank[effective.files] < accessRank[asked.files] ? 1 : 0) +
+    asked.tools.filter((key) => !effective.tools.includes(key)).length +
+    asked.mcp.filter((key) => !effective.mcp.includes(key)).length +
+    asked.skills.filter((key) => !effective.skills.includes(key)).length
+
   return (
-    <ul className="tools permissions">
-      <li>{t('detail.files', { access: t(FILE_ACCESS_KEY[effective.files]) })}</li>
-      {agent.model && <li>{t('detail.model', { model: agent.model })}</li>}
+    <div className="resource-meta">
+      <Chip label={t('resources.files')}>{t(FILE_ACCESS_KEY[effective.files])}</Chip>
+      {agent.model && <Chip label={t('resources.model')}>{agent.model}</Chip>}
       {lists.flatMap(([labelKey, all, granted]) =>
-        all.map((key) => (
-          <li
-            key={`${labelKey}:${key}`}
-            className={granted.includes(key) ? '' : 'off'}
-            title={granted.includes(key) ? undefined : t('resources.notActive')}
-          >
-            {t(labelKey, { key })}
-          </li>
-        )),
+        all
+          .filter((key) => granted.includes(key))
+          .map((key) => (
+            <Chip key={`${labelKey}:${key}`} label={t(labelKey)}>
+              {key}
+            </Chip>
+          )),
       )}
-    </ul>
+      {missing > 0 && (
+        <span className="meta-chip muted" title={t('resources.permissionsLimitedTitle')}>
+          {t(
+            missing === 1
+              ? 'resources.permissionsLimitedOne'
+              : 'resources.permissionsLimited',
+            { count: String(missing) },
+          )}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -136,15 +213,19 @@ function McpNeeds({ mcp, secretNames }: { mcp: McpResource; secretNames: string[
   const { t } = useI18n()
   if (mcp.needs.length === 0) return null
   return (
-    <ul className="tools permissions">
+    <div className="resource-meta">
       {mcp.needs.map((name) => {
         const missing = secretNames !== null && !secretNames.includes(name)
         return (
-          <li key={name} className={missing ? 'missing' : ''}>
-            {t(missing ? 'resources.secretMissing' : 'resources.secret', { name })}
-          </li>
+          <Chip
+            key={name}
+            label={t(missing ? 'resources.secretMissing' : 'resources.secret')}
+            tone={missing ? 'missing' : undefined}
+          >
+            <code>{name}</code>
+          </Chip>
         )
       })}
-    </ul>
+    </div>
   )
 }

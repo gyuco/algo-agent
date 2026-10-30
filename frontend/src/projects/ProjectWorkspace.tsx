@@ -11,13 +11,12 @@ import { LibraryPage } from '../library/LibraryPage'
 import { MissionStartDialog } from '../missions/MissionStartDialog'
 import { MissionsPanel } from '../missions/MissionsPanel'
 import { SecretsPanel } from '../vault/SecretsPanel'
-import { WorkflowsPanel } from '../workflows/WorkflowsPanel'
 import { projectsApi, type Project } from './api'
 import { ViewMenu, WorkspaceBar, type WorkspaceView } from './WorkspaceBar'
 
 interface Props {
   projectId: number
-  /** Run to open: its conversation in the chat, or its workflow run. */
+  /** Run to open: its conversation in the chat, or its mission. */
   runId?: number
   /** Mission to open in the Missions tab. */
   missionId?: number
@@ -25,7 +24,7 @@ interface Props {
   runs: ActiveRunsState
 }
 
-/** One project's workspace: chat, missions, workflows and the agents it has on. Key it by project. */
+/** One project's workspace: chat (and its workflows), missions and the agents it has on. Key it by project. */
 export function ProjectWorkspace({ projectId, runId, missionId, connections, runs }: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
@@ -64,13 +63,8 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
     runsApi.get(runId).then((run) => {
       if (run.projectId !== projectId) return
       setOpened(run)
-      setView(
-        run.kind === 'chat'
-          ? 'chat'
-          : run.kind === 'workflow'
-            ? 'workflows'
-            : 'missions',
-      )
+      // Workflow runs belong to the chat's conversations.
+      setView(run.kind === 'chat' || run.kind === 'workflow' ? 'chat' : 'missions')
       if (run.kind !== 'chat' && run.kind !== 'workflow') {
         setOpenMission(run.missionId ?? null)
       }
@@ -184,10 +178,11 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
                 name={project.name}
                 path={project.path}
                 agents={agents}
+                workflows={resources.workflows.filter((w) => w.enabled && !w.task)}
                 connections={connections.connected}
                 onUsage={connections.updateDetails}
                 runs={runs}
-                open={opened?.kind === 'chat' ? opened : null}
+                open={opened?.kind === 'chat' || opened?.kind === 'workflow' ? opened : null}
                 historyOpen={history}
                 onHistoryOpen={setHistory}
                 agent={agentKey}
@@ -203,17 +198,6 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
                 projectId={project.id}
                 initialMissionId={openMission}
                 onOpened={() => setOpenMission(null)}
-              />
-            </div>
-          )}
-          {connected && (
-            <div className="view-panel" hidden={view !== 'workflows'}>
-              <WorkflowsPanel
-                projectId={project.id}
-                workflows={resources.workflows.filter((w) => w.enabled && !w.task)}
-                onUsage={connections.updateDetails}
-                runs={runs}
-                open={opened?.kind === 'workflow' ? opened : null}
               />
             </div>
           )}

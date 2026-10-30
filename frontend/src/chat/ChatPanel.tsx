@@ -11,13 +11,17 @@ import {
   type ReactNode,
 } from "react";
 import { FILE_ACCESS_KEY } from "../agents/labels";
-import type { AgentResource } from "../agents/api";
+import type { AgentResource, WorkflowResource } from "../agents/api";
 import type { ConnectionStatus } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
 import { isActive, runsApi, type Run, type RunStatus } from "../runs/api";
 import { reasonText } from "../runs/reason";
 import { STATUS_KEY, type ActiveRunsState } from "../runs/useActiveRuns";
+import { workflowsApi } from "../workflows/api";
+import { WorkflowRunCard } from "../workflows/WorkflowRunCard";
+import { assignOf, type Team } from "../workflows/team";
+import { WorkflowTeam } from "../workflows/WorkflowTeam";
 import {
   chatApi,
   type HistoryMessage,
@@ -48,7 +52,10 @@ import {
 
 interface Message {
   id: number;
-  role: "user" | "assistant";
+  /** A workflow run in the conversation shows as its steps. */
+  role: "user" | "assistant" | "workflow";
+  /** The workflow run, for `workflow`. */
+  runId?: number;
   text: string;
   attachments?: Attachment[];
   tools: Tool[];
@@ -73,6 +80,8 @@ interface Props {
   path: string;
   /** Agents switched on in the project. */
   agents: AgentResource[];
+  /** Workflows switched on in the project, to run from the composer. */
+  workflows: WorkflowResource[];
   /** Connected providers, whose models the chat offers. */
   connections: ConnectionStatus[];
   /** Provider details a turn reported, e.g. Claude's plan usage. */
@@ -114,6 +123,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     name,
     path,
     agents,
+    workflows,
     connections,
     onUsage,
     runs,
@@ -152,6 +162,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   /** Past conversations shown in place of the chat. */
   const showSessions = historyOpen;
   const [streaming, setStreaming] = useState(false);
+  /** Workflow the next message starts instead of a chat turn; '' chats. */
+  const [workflowKey, setWorkflowKey] = useState("");
+  const workflow = workflows.find((w) => w.key === workflowKey);
+  /** Who fills the chosen workflow's agents. */
+  const [team, setTeam] = useState<Team>({});
+  /** Workflow run going in the conversation: it holds the composer like a turn. */
+  const [workflowRun, setWorkflowRun] = useState<number | null>(null);
+  /** Workflow runs since the last turn: the next one passes them on to the model. */
+  const [pendingWorkflows, setPendingWorkflows] = useState<number[]>([]);
+  const busy = streaming || workflowRun !== null;
   /** Run of the turn being followed. */
   const [turnRun, setTurnRun] = useState<number | null>(null);
   const turn = turnRun !== null ? runs.find(turnRun) : undefined;
@@ -257,13 +277,58 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragging(false);
-    if (workspace && !streaming) void attach(e.dataTransfer.files);
+    if (workspace && !busy && !workflow) void attach(e.dataTransfer.files);
+  }
+
+  /** Shows a workflow run after the messages; the next turn passes it on. */
+  function showWorkflow(runId: number, going: boolean) {
+    setMessages((list) => [...list, workflowMessage(runId)]);
+    setPendingWorkflows((list) => [...list, runId]);
+    if (going) setWorkflowRun(runId);
+  }
+
+  function workflowMessage(runId: number): Message {
+    return {
+      id: nextId.current++,
+      role: "workflow",
+      runId,
+      text: "",
+      tools: [],
+      delegations: [],
+    };
+  }
+
+  /** Starts the chosen workflow on the message, in this conversation; the composer goes back to chatting. */
+  async function startWorkflow(text: string) {
+    if (!workflow) return;
+    setAttachError(null);
+    try {
+      const { runId } = await workflowsApi.run(projectId, workflow.key, {
+        input: text,
+        sessionId,
+        assign: assignOf(team),
+      });
+      setInput("");
+      stickRef.current = true;
+      showWorkflow(runId, true);
+      setWorkflowKey("");
+      setTeam({});
+    } catch (err) {
+      setAttachError(
+        err instanceof Error ? err.message : t("workflows.startFailed"),
+      );
+    }
   }
 
   async function send() {
     const text = input.trim();
     const files = attachments;
-    if (!workspace || (!text && files.length === 0) || streaming) return;
+    if (!workspace || busy) return;
+    if (workflow) {
+      if (text) void startWorkflow(text);
+      return;
+    }
+    if (!text && files.length === 0) return;
     const userId = nextId.current++;
     const replyId = nextId.current++;
     setMessages((list) => [
@@ -299,7 +364,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
         sessionId,
         model: model || undefined,
         effort: efforts.includes(effort) ? effort : undefined,
+        workflowRuns: pendingWorkflows.length ? pendingWorkflows : undefined,
       });
+      setPendingWorkflows([]);
       void followTurn(runId, replyId);
     } catch (err) {
       update(replyId, (m) => ({
@@ -316,6 +383,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     abortRef.current = null;
     setStreaming(false);
     setTurnRun(null);
+    // Its card goes with the messages, and stops following it.
+    setWorkflowRun(null);
+    setPendingWorkflows([]);
   }
 
   /** Shows the turn's events from its first one, into the reply `replyId`. */
@@ -430,12 +500,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     if (!document.hidden) markSeen(runId);
   }
 
-  /** Shows a turn still going, after the finished ones, and follows it. */
-  function showTurn(runId: number, input: string) {
+  /** Shows a turn still going, after the finished ones and the workflows it passes on, and follows it. */
+  function showTurn(runId: number, input: string, workflowRuns: number[] = []) {
     const userId = nextId.current++;
     const replyId = nextId.current++;
     setMessages((list) => [
       ...list,
+      ...workflowRuns.map(workflowMessage),
       { id: userId, role: "user", text: input, tools: [], delegations: [] },
       {
         id: replyId,
@@ -497,8 +568,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
       setSessionId(run.sessionId ?? undefined);
       setSessionProvider(run.provider ?? undefined);
       setMissionId(null);
-      restoreModel(run.model, run.effort);
-      if (isActive(run.status)) {
+      if (run.kind === "workflow") {
+        // A workflow run of a new conversation: the next message continues from it.
+        setSessionProvider(undefined);
+        showWorkflow(run.id, isActive(run.status));
+      } else if (isActive(run.status)) {
+        restoreModel(run.model, run.effort);
         showTurn(run.id, run.input);
       } else {
         // Ended before the provider saved anything: only the run knows of it.
@@ -519,18 +594,33 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
             error: run.error ?? t(STATUS_KEY[run.status]),
           },
         ]);
+        restoreModel(run.model, run.effort);
       }
     } else {
       const history = await chatApi.history(projectId, session.sessionId);
+      // Only the last workflow can still be going: the composer waits for it.
+      const lastWorkflow = history.workflowRuns.at(-1);
+      const going =
+        lastWorkflow !== undefined &&
+        isActive((await runsApi.get(lastWorkflow)).status);
       stopFollowing();
-      setMessages(history.messages.map(fromHistory));
+      setMessages(
+        history.messages.flatMap((m) => [
+          ...m.workflowRuns.map(workflowMessage),
+          fromHistory(m),
+        ]),
+      );
       setSessionId(history.sessionId);
       setSessionProvider(history.provider);
       setMissionId(history.missionId);
       restoreModel(history.model, history.effort);
       const last = history.lastRun;
-      if (last && isActive(last.status)) showTurn(last.runId, last.input);
+      if (last && isActive(last.status))
+        showTurn(last.runId, last.input, last.workflowRuns);
       else if (last) markSeen(last.runId);
+      history.workflowRuns.forEach((id) =>
+        showWorkflow(id, going && id === lastWorkflow),
+      );
     }
     setFocus(null);
     onHistoryOpen(false);
@@ -562,6 +652,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
       })),
     };
   }
+
+  const modelOptions = connections.flatMap((c) =>
+    c.models.map((m) => ({
+      value: m.value,
+      label: m.displayName,
+      group: c.label,
+    })),
+  );
 
   function providerLabel(provider: string) {
     return connections.find((c) => c.provider === provider)?.label ?? provider;
@@ -633,7 +731,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
             {t("missions.open")}
           </a>
         )}
-        {onTransformToMission && sessionId && !streaming && (
+        {onTransformToMission && sessionId && !busy && (
           <button
             type="button"
             className="secondary"
@@ -715,7 +813,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                 )}
               </div>
             )}
-            {messages.map((m) => (
+            {messages.map((m) =>
+              m.role === "workflow" ? (
+                <div key={m.id} className="message workflow">
+                  <WorkflowRunCard
+                    runId={m.runId!}
+                    onUsage={onUsage}
+                    runs={runs}
+                    onEnd={(id) =>
+                      setWorkflowRun((going) => (going === id ? null : going))
+                    }
+                    onResumed={(id) => showWorkflow(id, true)}
+                  />
+                </div>
+              ) : (
               <div key={m.id} className={`message ${m.role}`}>
                 <ToolList tools={m.tools} root={workspace.path} />
                 {m.delegations.map((d) => (
@@ -748,10 +859,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                 )}
                 {m.meta && <small>{m.meta}</small>}
               </div>
-            ))}
+              ),
+            )}
           </div>
 
           <form className="composer" onSubmit={onSubmit}>
+            {workflow && (
+              <WorkflowTeam
+                workflow={workflow}
+                agents={agents}
+                models={modelOptions}
+                effortsOf={effortsOf}
+                team={team}
+                disabled={busy}
+                onChange={setTeam}
+              />
+            )}
             {attachments.length > 0 && (
               <AttachmentList
                 attachments={attachments}
@@ -782,7 +905,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                 className="icon attach"
                 aria-label={t("chat.attach")}
                 title={t("chat.attach")}
-                disabled={streaming || attachments.length >= MAX_ATTACHMENTS}
+                disabled={
+                  busy ||
+                  Boolean(workflow) ||
+                  attachments.length >= MAX_ATTACHMENTS
+                }
                 onClick={() => fileRef.current?.click()}
               >
                 <svg
@@ -806,19 +933,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                 rows={1}
                 autoFocus
                 aria-label={t("chat.messageLabel")}
-                placeholder={t("chat.placeholder")}
+                placeholder={workflow ? workflow.input : t("chat.placeholder")}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
               />
-              {streaming ? (
+              {busy ? (
                 <button
                   type="button"
                   className="secondary"
-                  disabled={turnRun === null}
+                  disabled={turnRun === null && workflowRun === null}
                   onClick={() => {
-                    if (turnRun !== null) void runsApi.abort(turnRun);
+                    const going = turnRun ?? workflowRun;
+                    if (going !== null) void runsApi.abort(going);
                   }}
                 >
                   {t("chat.stop")}
@@ -826,33 +954,53 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim() && attachments.length === 0}
+                  disabled={
+                    workflow
+                      ? !input.trim()
+                      : !input.trim() && attachments.length === 0
+                  }
                 >
-                  {t("chat.send")}
+                  {t(workflow ? "workflows.start" : "chat.send")}
                 </button>
               )}
             </div>
             <div className="row">
-              <ModelMenu
-                models={connections.flatMap((c) =>
-                  c.models.map((m) => ({
-                    value: m.value,
-                    label: m.displayName,
-                    group: c.label,
-                  })),
+              <div className="composer-modes">
+                {workflows.length > 0 && (
+                  <select
+                    aria-label={t("workflows.label")}
+                    value={workflowKey}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setWorkflowKey(e.target.value);
+                      setTeam({});
+                    }}
+                  >
+                    <option value="">{t("workflows.none")}</option>
+                    {workflows.map((w) => (
+                      <option key={w.key} value={w.key}>
+                        {t("workflows.option", { key: w.key })}
+                      </option>
+                    ))}
+                  </select>
                 )}
-                defaultLabel={
-                  agent?.model
-                    ? t("chat.agentModel", { model: agent.model })
-                    : t("chat.defaultModel")
-                }
-                model={model}
-                efforts={efforts}
-                effort={effort}
-                disabled={streaming}
-                onModel={chooseModel}
-                onEffort={setEffort}
-              />
+                {!workflow && (
+                  <ModelMenu
+                    models={modelOptions}
+                    defaultLabel={
+                      agent?.model
+                        ? t("chat.agentModel", { model: agent.model })
+                        : t("chat.defaultModel")
+                    }
+                    model={model}
+                    efforts={efforts}
+                    effort={effort}
+                    disabled={busy}
+                    onModel={chooseModel}
+                    onEffort={setEffort}
+                  />
+                )}
+              </div>
               <small>{t("chat.hint")}</small>
             </div>
           </form>

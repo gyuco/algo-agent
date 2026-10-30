@@ -6,6 +6,8 @@ import type { StepStatus } from './api'
 export interface RunStep {
   id: string
   agent: string
+  /** The model the agent runs with, when the run chose one. */
+  model?: string
   status: StepStatus
   text: string
   tools: string[]
@@ -31,6 +33,7 @@ export function RunSteps<T extends RunStep>({
           <strong>
             {s.id} · {s.agent}
           </strong>
+          {s.model && <small className="hint"> · {s.model}</small>}
           {s.round && (
             <small className="hint">
               {' '}

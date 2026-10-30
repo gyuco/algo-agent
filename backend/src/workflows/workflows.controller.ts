@@ -35,6 +35,12 @@ export class WorkflowsController {
     @Param('key') key: string,
     @Body() dto: WorkflowRunDto,
   ) {
-    return this.workflows.create(req.user.sub, projectId, key, dto.input);
+    return this.workflows.create(req.user.sub, projectId, key, {
+      input: dto.input,
+      sessionId: dto.sessionId,
+      assign: Object.fromEntries(
+        (dto.assign ?? []).map(({ slot, ...chosen }) => [slot, chosen]),
+      ),
+    });
   }
 }
