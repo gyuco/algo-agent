@@ -1,14 +1,11 @@
 import {
-  forwardRef,
   useEffect,
-  useImperativeHandle,
   useRef,
   useState,
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import { FILE_ACCESS_KEY } from "../agents/labels";
 import type { AgentResource, WorkflowResource } from "../agents/api";
@@ -16,14 +13,15 @@ import type { ConnectionStatus } from "../connections/api";
 import { connectionsApi } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
+import type { WorkspaceView } from "../projects/workspaceViews";
 import { isActive, runsApi, type Run, type RunStatus } from "../runs/api";
 import { reasonText } from "../runs/reason";
 import { STATUS_KEY, type ActiveRunsState } from "../runs/useActiveRuns";
 import { workflowsApi } from "../workflows/api";
 import { WorkflowRunCard } from "../workflows/WorkflowRunCard";
 import { assignOf, type Team } from "../workflows/team";
-import { WorkflowMenu } from "../workflows/WorkflowMenu";
 import { WorkflowTeam } from "../workflows/WorkflowTeam";
+import { ChatMenu } from "./ChatMenu";
 import {
   chatApi,
   type HistoryMessage,
@@ -92,25 +90,19 @@ interface Props {
   runs: ActiveRunsState;
   /** Chat run to show, from a link: its conversation, or the turn alone while it has none. */
   open: Run | null;
-  /** Past conversations shown in place of the chat: the workspace bar owns the switch. */
+  /** Past conversations shown in place of the chat. */
   historyOpen: boolean;
   onHistoryOpen: (open: boolean) => void;
-  /** Agent the chat delegates to, '' to chat with the model; picked from the workspace bar. */
+  /** Agent the chat delegates to, '' to chat with the model. */
   agent: string;
-  /** Called when the chat switches agent, so the bar's icon follows. */
+  /** Called when the chat switches agent, so the workspace follows. */
   onAgentChange: (key: string) => void;
-  /** Chat actions, beside the composer: agent, history, new conversation, views. */
-  tools?: ReactNode;
+  /** Views of the workspace, and the one showing now. */
+  views: { key: WorkspaceView; label: MessageKey }[];
+  view: WorkspaceView;
+  onView: (view: WorkspaceView) => void;
   /** Turns the conversation into a mission; shown when it has a session and no turn in progress. */
   onTransformToMission?: (sessionId: string) => void;
-}
-
-/** What the workspace bar can ask of the chat. */
-export interface ChatPanelHandle {
-  /** Starts an empty conversation; the current one stays in the history. */
-  newConversation: () => void;
-  /** Switches the agent the next message goes to. */
-  selectAgent: (key: string) => void;
 }
 
 /**
@@ -119,26 +111,25 @@ export interface ChatPanelHandle {
  * switching conversation or leaving only stops following it, and opening the
  * conversation again picks it up. Remount it (key) to switch folders.
  */
-export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
-  {
-    projectId,
-    name,
-    path,
-    agents,
-    workflows,
-    connections,
-    onUsage,
-    runs,
-    open,
-    historyOpen,
-    onHistoryOpen,
-    agent: agentKey,
-    onAgentChange,
-    tools,
-    onTransformToMission,
-  },
-  ref,
-) {
+export function ChatPanel({
+  projectId,
+  name,
+  path,
+  agents,
+  workflows,
+  connections,
+  onUsage,
+  runs,
+  open,
+  historyOpen,
+  onHistoryOpen,
+  agent: agentKey,
+  onAgentChange,
+  views,
+  view,
+  onView,
+  onTransformToMission,
+}: Props) {
   const { t, language } = useI18n();
   const { markSeen } = runs;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -555,18 +546,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     setFocus(null);
   }
 
-  // The workspace bar starts a new conversation, and doesn't reopen the history.
-  useImperativeHandle(ref, () => ({
-    newConversation() {
-      newConversation();
-      onHistoryOpen(false);
-    },
-    selectAgent(key: string) {
-      switchAgent(key);
-      onHistoryOpen(false);
-    },
-  }));
-
   /**
    * A conversation as the chat's own: shown, with its turn in progress
    * followed, and continued by the next message. One still without an id is
@@ -900,34 +879,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                   e.target.value = "";
                 }}
               />
-              <button
-                type="button"
-                className="icon attach"
-                aria-label={t("chat.attach")}
-                title={t("chat.attach")}
-                disabled={
-                  busy ||
-                  Boolean(workflow) ||
-                  attachments.length >= MAX_ATTACHMENTS
-                }
-                onClick={() => fileRef.current?.click()}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="18"
-                  height="18"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
               <textarea
                 ref={inputRef}
                 rows={1}
@@ -939,33 +890,45 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
               />
-              {busy ? (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={turnRun === null && workflowRun === null}
-                  onClick={() => {
-                    const going = turnRun ?? workflowRun;
-                    if (going !== null) void runsApi.abort(going);
+              <div className="composer-bar">
+                <ChatMenu
+                  agents={agents}
+                  agent={agentKey}
+                  onAgent={(key) => {
+                    switchAgent(key);
+                    onHistoryOpen(false);
                   }}
-                >
-                  {t("chat.stop")}
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={
-                    workflow
-                      ? !input.trim()
-                      : !input.trim() && attachments.length === 0
+                  workflows={workflows}
+                  workflow={workflowKey}
+                  onWorkflow={(key) => {
+                    setWorkflowKey(key);
+                    setTeam({});
+                  }}
+                  workflowsDisabled={busy}
+                  views={views}
+                  view={view}
+                  onView={onView}
+                  historyOpen={historyOpen}
+                  onHistory={() => onHistoryOpen(!historyOpen)}
+                  onNew={() => {
+                    newConversation();
+                    onHistoryOpen(false);
+                  }}
+                  onAttach={() => fileRef.current?.click()}
+                  attachDisabled={
+                    busy || Boolean(workflow) || attachments.length >= MAX_ATTACHMENTS
                   }
-                >
-                  {t(workflow ? "workflows.start" : "chat.send")}
-                </button>
-              )}
-            </div>
-            <div className="row">
-              <div className="composer-modes">
+                  missionHref={
+                    missionId !== null
+                      ? `#/workspace/${projectId}/mission/${missionId}`
+                      : undefined
+                  }
+                  onTransform={
+                    onTransformToMission && sessionId && !busy
+                      ? () => onTransformToMission(sessionId)
+                      : undefined
+                  }
+                />
                 {!workflow && (
                   <ModelMenu
                     models={modelOptions}
@@ -982,41 +945,40 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                     onEffort={setEffort}
                   />
                 )}
-                {workflows.length > 0 && (
-                  <WorkflowMenu
-                    workflows={workflows}
-                    value={workflowKey}
-                    disabled={busy}
-                    onChange={(key) => {
-                      setWorkflowKey(key);
-                      setTeam({});
-                    }}
-                  />
-                )}
-                {tools}
-                {missionId !== null && (
-                  <a className="link" href={`#/workspace/${projectId}/mission/${missionId}`}>
-                    {t("missions.open")}
-                  </a>
-                )}
-                {onTransformToMission && sessionId && !busy && (
+                <span className="composer-spacer" />
+                {busy ? (
                   <button
                     type="button"
                     className="secondary"
-                    onClick={() => onTransformToMission(sessionId)}
+                    disabled={turnRun === null && workflowRun === null}
+                    onClick={() => {
+                      const going = turnRun ?? workflowRun;
+                      if (going !== null) void runsApi.abort(going);
+                    }}
                   >
-                    {t("missions.transform")}
+                    {t("chat.stop")}
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={
+                      workflow
+                        ? !input.trim()
+                        : !input.trim() && attachments.length === 0
+                    }
+                  >
+                    {t(workflow ? "workflows.start" : "chat.send")}
                   </button>
                 )}
               </div>
-              <small>{t("chat.hint")}</small>
             </div>
+            <small className="composer-hint">{t("chat.hint")}</small>
           </form>
         </>
       )}
     </section>
   );
-});
+}
 
 function AttachmentList({
   attachments,

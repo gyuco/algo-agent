@@ -1,16 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MessageKey } from '../i18n/messages'
 import { useI18n } from '../i18n/useI18n'
 import { ProjectIcon } from './ProjectIcon'
-
-/** What the workspace shows under the bar. */
-export type WorkspaceView = 'chat' | 'missions' | 'resources'
-
-const VIEWS: [WorkspaceView, MessageKey][] = [
-  ['chat', 'chat.title'],
-  ['missions', 'missions.title'],
-  ['resources', 'workspace.tabResources'],
-]
+import { WORKSPACE_VIEWS, type WorkspaceView } from './workspaceViews'
 
 interface Props {
   name: string
@@ -119,16 +110,16 @@ export function ViewMenu({ view, onOpen }: { view: WorkspaceView; onOpen: (view:
           aria-label={t('workspace.views')}
           ref={popover}
         >
-          {VIEWS.map(([id, label]) => (
+          {WORKSPACE_VIEWS.map(({ key, label }) => (
             <button
-              key={id}
+              key={key}
               type="button"
               role="menuitemradio"
-              aria-checked={view === id}
+              aria-checked={view === key}
               className="menu-item"
               onClick={() => {
                 setOpen(false)
-                onOpen(id)
+                onOpen(key)
               }}
             >
               <span className="text">{t(label)}</span>
