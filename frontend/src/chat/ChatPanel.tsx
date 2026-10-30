@@ -16,7 +16,6 @@ import type { ConnectionStatus } from "../connections/api";
 import { connectionsApi } from "../connections/api";
 import type { MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/useI18n";
-import { ProjectIcon } from "../projects/ProjectIcon";
 import { isActive, runsApi, type Run, type RunStatus } from "../runs/api";
 import { reasonText } from "../runs/reason";
 import { STATUS_KEY, type ActiveRunsState } from "../runs/useActiveRuns";
@@ -77,13 +76,10 @@ const ATTACHMENT_KEY: Record<AttachmentProblem, MessageKey> = {
 
 interface Props {
   projectId: number;
-  /** Project name, shown in the chat card above the conversation. */
+  /** Project name, for the chat's accessible label. */
   name: string;
   /** Project folder the agent works in. */
   path: string;
-  /** Project icon: its colour or a logo. */
-  color?: string | null;
-  logo?: string | null;
   /** Agents switched on in the project. */
   agents: AgentResource[];
   /** Workflows switched on in the project, to run from the composer. */
@@ -103,7 +99,7 @@ interface Props {
   agent: string;
   /** Called when the chat switches agent, so the bar's icon follows. */
   onAgentChange: (key: string) => void;
-  /** Actions in the card's heading: agent, history, new conversation, views. */
+  /** Chat actions, beside the composer: agent, history, new conversation, views. */
   tools?: ReactNode;
   /** Turns the conversation into a mission; shown when it has a session and no turn in progress. */
   onTransformToMission?: (sessionId: string) => void;
@@ -128,8 +124,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
     projectId,
     name,
     path,
-    color,
-    logo,
     agents,
     workflows,
     connections,
@@ -734,7 +728,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
   return (
     <section
       className={dragging ? "card chat dragging" : "card chat"}
-      aria-label={t("chat.title")}
+      aria-label={`${name} — ${t("chat.title")}`}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
@@ -746,47 +740,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
       }}
       onDrop={onDrop}
     >
-      <header className="chat-top">
-        <div className="chat-title">
-          <ProjectIcon name={name} color={color} logo={logo} className="project-icon-sm" />
-          <h1 className="workspace-title" title={name}>
-            {name}
-          </h1>
-          <code className="workspace-path" title={path}>
-            {path}
-          </code>
-        </div>
-        {missionId !== null && (
-          <a className="link" href={`#/workspace/${projectId}/mission/${missionId}`}>
-            {t("missions.open")}
-          </a>
-        )}
-        {onTransformToMission && sessionId && !busy && (
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => onTransformToMission(sessionId)}
-          >
-            {t("missions.transform")}
-          </button>
-        )}
-        {(tools || workflows.length > 0) && (
-          <div className="chat-tools">
-            {workflows.length > 0 && (
-              <WorkflowMenu
-                workflows={workflows}
-                value={workflowKey}
-                disabled={busy}
-                onChange={(key) => {
-                  setWorkflowKey(key);
-                  setTeam({});
-                }}
-              />
-            )}
-            {tools}
-          </div>
-        )}
-      </header>
+      {/* The header is gone: the project name stays for screen readers. */}
+      <h1 className="sr-only">{name}</h1>
 
       {workspaceError && (
         <p className="error" role="alert">
@@ -1026,6 +981,32 @@ export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
                     onModel={chooseModel}
                     onEffort={setEffort}
                   />
+                )}
+                {workflows.length > 0 && (
+                  <WorkflowMenu
+                    workflows={workflows}
+                    value={workflowKey}
+                    disabled={busy}
+                    onChange={(key) => {
+                      setWorkflowKey(key);
+                      setTeam({});
+                    }}
+                  />
+                )}
+                {tools}
+                {missionId !== null && (
+                  <a className="link" href={`#/workspace/${projectId}/mission/${missionId}`}>
+                    {t("missions.open")}
+                  </a>
+                )}
+                {onTransformToMission && sessionId && !busy && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => onTransformToMission(sessionId)}
+                  >
+                    {t("missions.transform")}
+                  </button>
                 )}
               </div>
               <small>{t("chat.hint")}</small>

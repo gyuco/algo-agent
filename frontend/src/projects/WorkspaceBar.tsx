@@ -24,7 +24,7 @@ interface Props {
 
 /**
  * Header of the views that don't show one themselves: where the project lives
- * and what it opens. The chat keeps its own, inside the card.
+ * and what it opens. The chat has none: its actions sit by the composer.
  */
 export function WorkspaceBar({ name, path, color, logo, view, onOpen }: Props) {
   return (

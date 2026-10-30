@@ -22,10 +22,19 @@ interface Props {
   missionId?: number
   connections: ConnectionsState
   runs: ActiveRunsState
+  /** Tells the top bar which project is open, for its title. */
+  onProjectName?: (projectId: number, name: string) => void
 }
 
 /** One project's workspace: chat (and its workflows), missions and the agents it has on. Key it by project. */
-export function ProjectWorkspace({ projectId, runId, missionId, connections, runs }: Props) {
+export function ProjectWorkspace({
+  projectId,
+  runId,
+  missionId,
+  connections,
+  runs,
+  onProjectName,
+}: Props) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
@@ -47,8 +56,11 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '')
 
   useEffect(() => {
-    projectsApi.get(projectId).then(setProject, fail)
-  }, [projectId])
+    projectsApi.get(projectId).then((p) => {
+      setProject(p)
+      onProjectName?.(projectId, p.name)
+    }, fail)
+  }, [projectId, onProjectName])
 
   const loadResources = useCallback(() => {
     resourcesApi.list(projectId).then(setResources, fail)
@@ -92,7 +104,7 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
   /** The chosen agent, ignored while it isn't one of the project's. */
   const agentKey = agents.some((a) => a.key === agent) ? agent : ''
 
-  /** The chat's actions, in the card's heading instead of a bar above it. */
+  /** The chat's actions, beside the composer: the conversation has no header. */
   const chatTools = (
     <>
       <AgentMenu
@@ -184,8 +196,6 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
                 projectId={project.id}
                 name={project.name}
                 path={project.path}
-                color={project.color}
-                logo={project.logo}
                 agents={agents}
                 workflows={resources.workflows.filter((w) => w.enabled && !w.task)}
                 connections={connections.connected}
