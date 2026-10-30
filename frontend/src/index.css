@@ -436,14 +436,65 @@ button.link {
   color: #fff;
 }
 
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+  padding-top: 0.25rem;
+}
+
+.nav-user .avatar {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.8125rem;
+}
+
 .nav-account {
+  min-width: 0;
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 0.75rem;
-  opacity: 0.7;
+  font-size: 0.8125rem;
+  opacity: 0.8;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nav-user-action {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.625rem 0.5rem;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--text-h);
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.nav-user-action svg {
+  flex: none;
+  opacity: 0.7;
+}
+
+.nav-user-action:hover,
+.nav-user-action:focus-visible {
+  background: var(--bg);
+  outline: none;
+}
+
+.nav-user-action.logout {
+  color: var(--error);
+}
+
+.nav-user-action.logout svg {
+  opacity: 1;
 }
 
 @keyframes drawer-in {

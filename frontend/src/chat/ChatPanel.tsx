@@ -1,5 +1,7 @@
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ClipboardEvent,
@@ -105,31 +107,40 @@ interface Props {
   onTransformToMission?: (sessionId: string) => void;
 }
 
+/** What the top bar can ask of the chat. */
+export interface ChatPanelHandle {
+  /** Starts an empty conversation; the current one stays in the history. */
+  newConversation: () => void;
+}
+
 /**
  * Chat inside one folder, with an agent or straight with the model, which may
  * then delegate to the project's agents. Each turn runs in the background:
  * switching conversation or leaving only stops following it, and opening the
  * conversation again picks it up. Remount it (key) to switch folders.
  */
-export function ChatPanel({
-  projectId,
-  name,
-  path,
-  agents,
-  workflows,
-  connections,
-  onUsage,
-  runs,
-  open,
-  historyOpen,
-  onHistoryOpen,
-  agent: agentKey,
-  onAgentChange,
-  views,
-  view,
-  onView,
-  onTransformToMission,
-}: Props) {
+export const ChatPanel = forwardRef<ChatPanelHandle, Props>(function ChatPanel(
+  {
+    projectId,
+    name,
+    path,
+    agents,
+    workflows,
+    connections,
+    onUsage,
+    runs,
+    open,
+    historyOpen,
+    onHistoryOpen,
+    agent: agentKey,
+    onAgentChange,
+    views,
+    view,
+    onView,
+    onTransformToMission,
+  },
+  ref,
+) {
   const { t, language } = useI18n();
   const { markSeen } = runs;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -546,6 +557,14 @@ export function ChatPanel({
     setFocus(null);
   }
 
+  // The top bar starts a new conversation and doesn't reopen the history.
+  useImperativeHandle(ref, () => ({
+    newConversation() {
+      newConversation();
+      onHistoryOpen(false);
+    },
+  }));
+
   /**
    * A conversation as the chat's own: shown, with its turn in progress
    * followed, and continued by the next message. One still without an id is
@@ -910,10 +929,6 @@ export function ChatPanel({
                   onView={onView}
                   historyOpen={historyOpen}
                   onHistory={() => onHistoryOpen(!historyOpen)}
-                  onNew={() => {
-                    newConversation();
-                    onHistoryOpen(false);
-                  }}
                   onAttach={() => fileRef.current?.click()}
                   attachDisabled={
                     busy || Boolean(workflow) || attachments.length >= MAX_ATTACHMENTS
@@ -978,7 +993,7 @@ export function ChatPanel({
       )}
     </section>
   );
-}
+});
 
 function AttachmentList({
   attachments,

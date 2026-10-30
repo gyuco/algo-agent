@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
 import { resourcesApi, type ProjectResources } from '../agents/api'
 import { ResourcesPanel } from '../agents/ResourcesPanel'
-import { ChatPanel } from '../chat/ChatPanel'
+import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
 import type { ConnectionsState } from '../connections/useConnections'
 import { useI18n } from '../i18n/useI18n'
 import { runsApi, type Run } from '../runs/api'
@@ -24,8 +31,17 @@ interface Props {
   runs: ActiveRunsState
 }
 
+/** What the top bar can ask of the open workspace. */
+export interface WorkspaceHandle {
+  /** Starts an empty conversation and shows the chat. */
+  newConversation: () => void
+}
+
 /** One project's workspace: chat (and its workflows), missions and the agents it has on. Key it by project. */
-export function ProjectWorkspace({ projectId, runId, missionId, connections, runs }: Props) {
+export const ProjectWorkspace = forwardRef<WorkspaceHandle, Props>(function ProjectWorkspace(
+  { projectId, runId, missionId, connections, runs },
+  ref,
+) {
   const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [resources, setResources] = useState<ProjectResources | null>(null)
@@ -37,6 +53,8 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
   const [secretNames, setSecretNames] = useState<string[] | null>(null)
   /** '' means a failure without a server message. */
   const [error, setError] = useState<string | null>(null)
+  /** The chat, for the top bar's "new conversation". */
+  const chat = useRef<ChatPanelHandle>(null)
   /** Conversation being turned into a mission. */
   const [transformSession, setTransformSession] = useState<string | null>(null)
   /** Mission to open in the Missions tab, e.g. the one just created. */
@@ -82,6 +100,14 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
     if (next !== 'chat') setHistory(false)
   }
 
+  // The top bar starts an empty conversation, from any workspace view.
+  useImperativeHandle(ref, () => ({
+    newConversation() {
+      chat.current?.newConversation()
+      openView('chat')
+    },
+  }))
+
   const connected = connections.connected.length > 0
   const agents = resources?.agents.filter((a) => a.enabled) ?? []
   /** Remounts the chat when the set of agents changes, so it never keeps a disabled one. */
@@ -121,6 +147,7 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
           {connected && (
             <div className="view-panel" hidden={view !== 'chat'}>
               <ChatPanel
+                ref={chat}
                 key={`${project.id}:${agentsKey}`}
                 projectId={project.id}
                 name={project.name}
@@ -177,4 +204,4 @@ export function ProjectWorkspace({ projectId, runId, missionId, connections, run
       )}
     </>
   )
-}
+})

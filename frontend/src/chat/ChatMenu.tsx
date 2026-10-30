@@ -23,7 +23,6 @@ interface Props {
   /** Past conversations shown in place of the chat. */
   historyOpen: boolean
   onHistory: () => void
-  onNew: () => void
   /** Opens the file picker for the attachments. */
   onAttach: () => void
   attachDisabled?: boolean
@@ -49,7 +48,6 @@ export function ChatMenu({
   onView,
   historyOpen,
   onHistory,
-  onNew,
   onAttach,
   attachDisabled,
   missionHref,
@@ -233,17 +231,6 @@ export function ChatMenu({
             }}
           >
             <span className="text">{t('chat.history')}</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="menu-item"
-            onClick={() => {
-              close()
-              onNew()
-            }}
-          >
-            <span className="text">{t('chat.newConversation')}</span>
           </button>
 
           <div className="menu-separator" role="separator" />

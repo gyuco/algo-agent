@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { LoginPage } from './auth/LoginPage'
 import { ProfilePage } from './auth/ProfilePage'
-import { UserMenu } from './auth/UserMenu'
 import { useAuth } from './auth/useAuth'
 import { LANGUAGES, type MessageKey } from './i18n/messages'
 import { useI18n } from './i18n/useI18n'
 import { LibraryPage } from './library/LibraryPage'
 import { ProjectCards } from './projects/ProjectCards'
 import { ProjectsPage } from './projects/ProjectsPage'
-import { ProjectWorkspace } from './projects/ProjectWorkspace'
+import { ProjectWorkspace, type WorkspaceHandle } from './projects/ProjectWorkspace'
 import { ConnectionsBadge } from './connections/ConnectionsBadge'
 import { ConnectionsPage } from './connections/ConnectionsPage'
 import { useConnections, type ConnectionsState } from './connections/useConnections'
@@ -147,6 +146,7 @@ function NavDrawer({
   runs,
   missions,
   email,
+  onLogout,
   onClose,
 }: {
   page: Page
@@ -154,6 +154,7 @@ function NavDrawer({
   runs: ActiveRunsState
   missions: number
   email: string
+  onLogout: () => void
   onClose: () => void
 }) {
   const { t, language, setLanguage } = useI18n()
@@ -270,16 +271,55 @@ function NavDrawer({
               ))}
             </div>
           </div>
-          <p className="nav-account" title={email}>
-            {email}
-          </p>
+          <div className="nav-user">
+            <span className="avatar" aria-hidden="true">
+              {email.slice(0, 1).toUpperCase()}
+            </span>
+            <span className="nav-account" title={email}>
+              {email}
+            </span>
+          </div>
+          <a className="nav-user-action" href="#/profile" onClick={onClose}>
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 20a8 8 0 0 1 16 0" />
+            </svg>
+            <span>{t('user.profile')}</span>
+          </a>
+          <button type="button" className="nav-user-action logout" onClick={onLogout}>
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" />
+              <path d="m10 17 5-5-5-5M15 12H3" />
+            </svg>
+            <span>{t('app.logout')}</span>
+          </button>
         </div>
       </div>
     </div>
   )
 }
 
-/** Top bar: only the hamburger on the left and the account on the right. */
+/** Top bar: the hamburger on the left, the new conversation on the right. */
 function AppTopBar({
   page,
   connections,
@@ -287,6 +327,7 @@ function AppTopBar({
   missions,
   email,
   onLogout,
+  onNewConversation,
 }: {
   page: Page
   connections: ConnectionsState
@@ -294,6 +335,8 @@ function AppTopBar({
   missions: number
   email: string
   onLogout: () => void
+  /** Missing outside a workspace whose chat can start. */
+  onNewConversation?: () => void
 }) {
   const { t } = useI18n()
   const [navOpen, setNavOpen] = useState(false)
@@ -345,7 +388,30 @@ function AppTopBar({
             )}
           </button>
         </div>
-        <UserMenu email={email} onLogout={onLogout} />
+        {onNewConversation && (
+          <button
+            type="button"
+            className="topbar-toggle"
+            aria-label={t('chat.newConversation')}
+            title={t('chat.newConversation')}
+            onClick={onNewConversation}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="21"
+              height="21"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2" />
+              <path d="M17 3v6M14 6h6" />
+            </svg>
+          </button>
+        )}
       </header>
       {navOpen && (
         <NavDrawer
@@ -354,6 +420,7 @@ function AppTopBar({
           runs={runs}
           missions={missions}
           email={email}
+          onLogout={onLogout}
           onClose={closeAndFocus}
         />
       )}
@@ -368,6 +435,9 @@ function App() {
   const runs = useActiveRuns(Boolean(user))
   const missions = useMissionNotifications(Boolean(user))
   const { t } = useI18n()
+  /** The open workspace, for the top bar's "new conversation". */
+  const workspace = useRef<WorkspaceHandle>(null)
+  const startConversation = useCallback(() => workspace.current?.newConversation(), [])
 
   /* The visible height: on phones it excludes the keyboard, so the composer
      stays above it instead of hiding behind it. */
@@ -391,6 +461,9 @@ function App() {
   if (!user) return <LoginPage />
 
   const displayName = user.name?.trim() || user.email.split('@')[0]
+  /* Only a workspace with a provider has a chat to start. */
+  const canStartConversation =
+    page.name === 'workspace' && !connections.checking && connections.connected.length > 0
 
   return (
     <div className={page.name === 'workspace' ? 'layout fill' : 'layout'}>
@@ -401,6 +474,7 @@ function App() {
         missions={missions.unread}
         email={user.email}
         onLogout={logout}
+        onNewConversation={canStartConversation ? startConversation : undefined}
       />
       <main className={page.name === 'home' ? 'home home-dashboard' : 'home'}>
         {page.name === 'projects' && <ProjectsPage />}
@@ -412,6 +486,7 @@ function App() {
         {page.name === 'profile' && <ProfilePage />}
         {page.name === 'workspace' && (
           <ProjectWorkspace
+            ref={workspace}
             key={page.projectId}
             projectId={page.projectId}
             runId={page.runId}
